@@ -69,10 +69,13 @@ int main(void)
     check(strcmp(sfo_get_str(sfo, &entries[0]), "PG") == 0, "entry0 value PG");
     check(strcmp(sfo_get_str(sfo, &entries[1]), "SomeTitle") == 0, "entry1 value SomeTitle");
 
-    /* integer fmt check */
-    sfo[38]=0x04; sfo[39]=0x04;  /* change TITLE fmt to int */
+    /* integer fmt: change TITLE fmt to 0x0404 and write known data */
+    sfo[38]=0x04; sfo[39]=0x04;          /* fmt = 0x0404 (int) */
+    sfo[71]=0x2A; sfo[72]=0x00; sfo[73]=0; sfo[74]=0;  /* data = 42 */
     n = sfo_parse(sfo, sizeof(sfo), entries, 8);
-    check(n == 2 && sfo_get_int(sfo, &entries[1]) == 0, "int fmt returns 0");
+    check(n == 2, "still 2 entries after fmt change");
+    check(sfo_get_int(sfo, &entries[1]) == 42, "int fmt reads 42");
+    check(strcmp(sfo_get_str(sfo, &entries[1]), "") == 0, "int fmt str -> empty");
 
     /* bad magic */
     sfo[0]='X';
