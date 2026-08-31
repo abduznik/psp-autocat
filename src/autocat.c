@@ -30,6 +30,9 @@
 
 #define REPORT_PATH "ms0:/seplugins/autocat_report.txt"
 
+/* candidate device roots: ms0: first, then ef0: (PSP Go) */
+static const char *game_roots[2] = { "ms0:", "ef0:" };
+
 /* ── helpers ─────────────────────────────────────────────── */
 
 static int is_categorized(const char *name)
