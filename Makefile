@@ -39,13 +39,19 @@ release: clean all
 
 # ── Host unit tests (plain gcc, no PSP SDK) ──────────────
 TEST_CC ?= cc
-TEST_SRC := test/test_classify.c test/test_sfo.c src/sfo.c src/classify.c
 
-test: $(TEST_SRC)
-	$(TEST_CC) -Isrc -o test/test_classify test/test_classify.c src/sfo.c src/classify.c
-	$(TEST_CC) -Isrc -o test/test_sfo test/test_sfo.c src/sfo.c
+# NOTE: 'test' must be .PHONY — the test/ directory would otherwise
+# shadow the target and make would say "up to date" without running.
+.PHONY: test pack release
+test: test/test_classify test/test_sfo
 	./test/test_classify
 	./test/test_sfo
+
+test/test_classify: test/test_classify.c src/sfo.c src/classify.c src/sfo.h src/classify.h
+	$(TEST_CC) -Isrc -o $@ $< src/sfo.c src/classify.c
+
+test/test_sfo: test/test_sfo.c src/sfo.c src/sfo.h
+	$(TEST_CC) -Isrc -o $@ $< src/sfo.c
 
 # ── Host-side release packaging (zip on CI runner) ───────
 # NOTE: pack must NOT depend on all — CI builds the PRX in Docker first,
