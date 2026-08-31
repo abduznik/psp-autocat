@@ -1,23 +1,34 @@
 /*
  * autocat.c — AutoCat organizer core
  *
- * Walks /PSP/GAME/, parses EBOOT.PBP PARAM.SFO, classifies,
- * and renames game folders into CAT_xx category folders.
- * Never touches: hidden dirs, CAT_* dirs, non-EBOOT dirs.
+ * Walks /PSP/GAME (EBOOT.PBP folders) and /ISO (.iso/.cso rips),
+ * classifies each game from its metadata, and renames it into the
+ * matching CAT_xx category folder.
+ *
+ * /PSP/GAME  -> classification via EBOOT.PBP PARAM.SFO
+ * /ISO/*.iso -> classification via ISO9660 UMD_DATA.BIN game id
+ * /ISO/*.cso -> classification via CSO decompression + UMD_DATA.BIN
+ *
+ * Category folders live next to the source:
+ *   /PSP/GAME/CAT_01_PSP/..., /ISO/CAT_01_PSP/...
+ * PRO/ME CFW merge same-named categories across both roots on the XMB.
+ *
+ * Never touches: hidden dirs, CAT_* folders, non-game files.
  */
 
 #include <pspkernel.h>
 #include <pspiofilemgr.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "autocat.h"
 #include "sfo.h"
 #include "classify.h"
+#include "isocd.h"
+#include "cso.h"
 
 #define REPORT_PATH "ms0:/seplugins/autocat_report.txt"
-
-static const char *game_roots[2] = { "ms0:/PSP/GAME", "ef0:/PSP/GAME" };
 
 /* ── helpers ─────────────────────────────────────────────── */
 
@@ -37,6 +48,14 @@ static int dir_has_eboot(const char *root, const char *name)
 
     snprintf(path, sizeof(path), "%s/%s/EBOOT.PBP", root, name);
     return sceIoGetstat(path, &st) >= 0;
+}
+
+static int has_suffix(const char *name, const char *suffix)
+{
+    size_t nl = strlen(name);
+    size_t sl = strlen(suffix);
+    if (nl < sl) return 0;
+    return strcasecmp(name + nl - sl, suffix) == 0;
 }
 
 /* Read PARAM.SFO out of an EBOOT.PBP into buf. Returns SFO size or <0. */
@@ -72,7 +91,25 @@ static int read_eboot_sfo(const char *root, const char *name,
     return n;
 }
 
-/* ── organizer ───────────────────────────────────────────── */
+/* ── /ISO readers ────────────────────────────────────────── */
+
+/* Plain .iso: read sectors straight from file. */
+typedef struct {
+    SceUID fd;
+} iso_file_ctx;
+
+static int iso_sector_read(void *ctx, unsigned int sector,
+                           unsigned char *out, unsigned int n)
+{
+    iso_file_ctx *c = (iso_file_ctx *)ctx;
+    if (sceIoLseek(c->fd, (SceOff)sector * 2048, PSP_SEEK_SET) < 0)
+        return -1;
+    if (sceIoRead(c->fd, out, n * 2048) != (int)(n * 2048))
+        return -1;
+    return 0;
+}
+
+/* ── organizer: /PSP/GAME eboots ─────────────────────────── */
 
 static void write_report_line(SceUID rfd, const char *line)
 {
@@ -81,37 +118,20 @@ static void write_report_line(SceUID rfd, const char *line)
     }
 }
 
-int autocat_run_all(void)
+static int organize_eboots(const char *root, SceUID rfd)
 {
-    int root_idx;
-    const char *root = NULL;
-    SceUID dfd = -1;
+    SceUID dfd;
     SceIoDirent dir;
-    SceUID rfd = -1;
     int moved = 0;
     char report[256];
 
-    /* find a working game root (ms0: first, then ef0: PSP Go) */
-    for (root_idx = 0; root_idx < 2; root_idx++) {
-        dfd = sceIoDopen(game_roots[root_idx]);
-        if (dfd >= 0) {
-            root = game_roots[root_idx];
-            break;
-        }
-    }
-    if (dfd < 0) return 0; /* no game folder at all */
-
-    /* report file (append) */
-    rfd = sceIoOpen(REPORT_PATH,
-                    PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
-
-    snprintf(report, sizeof(report),
-             "\n== AutoCat run on %s ==\n", root);
-    write_report_line(rfd, report);
+    dfd = sceIoDopen(root);
+    if (dfd < 0) return 0;
 
     while (sceIoDread(dfd, &dir) > 0) {
         const char *name = dir.d_name;
-        unsigned char sfo[4096];
+        /* static: 4KB sfo won't fit on the VSH plugin stack */
+        static unsigned char sfo[4096];
         sfo_entry_t entries[32];
         int sfo_size, count, i;
         const char *category = "", *disc_id = "", *title = "";
@@ -148,13 +168,6 @@ int autocat_run_all(void)
         kind = classify_game(category, disc_id, title);
         folder = ac_kind_folder(kind);
 
-        if (kind == AC_UNKNOWN) {
-            snprintf(report, sizeof(report),
-                     "SKIP %s (unreadable EBOOT)\n", name);
-            write_report_line(rfd, report);
-            continue;
-        }
-
         /* build category dir if missing */
         snprintf(old_path, sizeof(old_path), "%s/%s", root, folder);
         sceIoMkdir(old_path, 0777);
@@ -186,8 +199,163 @@ int autocat_run_all(void)
         }
         write_report_line(rfd, report);
     }
-
     sceIoDclose(dfd);
+    return moved;
+}
+
+/* ── organizer: /ISO rips ────────────────────────────────── */
+
+static int classify_iso_by_id(const char *disc_id)
+{
+    /* full game id as seen in UMD_DATA.BIN: "UCUS-98618" */
+    if (disc_id && *disc_id) {
+        return (int)classify_game("", disc_id, "");
+    }
+    return (int)AC_UNKNOWN;
+}
+
+static int organize_iso(const char *root, SceUID rfd)
+{
+    SceUID dfd;
+    SceIoDirent dir;
+    int moved = 0;
+    char report[256];
+
+    dfd = sceIoDopen(root);
+    if (dfd < 0) return 0;
+
+    while (sceIoDread(dfd, &dir) > 0) {
+        const char *name = dir.d_name;
+        int is_iso, is_cso;
+        unsigned char umd[256];
+        char disc_id[32];
+        enum ac_kind kind;
+        const char *folder;
+        char old_path[140], new_path[140];
+        int n, suffix = 0;
+
+        if (name[0] == '.') continue;
+        if (FIO_S_ISDIR(dir.d_stat.st_mode)) continue;
+        if (is_categorized(name)) continue;
+
+        is_iso = has_suffix(name, ".iso");
+        is_cso = has_suffix(name, ".cso");
+        if (!is_iso && !is_cso) continue; /* only game rips */
+
+        disc_id[0] = 0;
+        kind = AC_UNKNOWN;
+
+        if (is_cso) {
+            cso_ctx_t cso;
+            char path[140];
+            snprintf(path, sizeof(path), "%s/%s", root, name);
+            if (cso_open(&cso, path) == 0) {
+                n = isocd_read_umd_data(cso_read_sectors, &cso,
+                                        umd, sizeof(umd));
+                if (n > 0) {
+                    isocd_extract_game_id(umd, n, disc_id, sizeof(disc_id));
+                    kind = (enum ac_kind)classify_iso_by_id(disc_id);
+                }
+                cso_close(&cso);
+            }
+        } else {
+            iso_file_ctx fctx;
+            char path[140];
+            snprintf(path, sizeof(path), "%s/%s", root, name);
+            fctx.fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+            if (fctx.fd >= 0) {
+                n = isocd_read_umd_data(iso_sector_read, &fctx,
+                                        umd, sizeof(umd));
+                sceIoClose(fctx.fd);
+                if (n > 0) {
+                    isocd_extract_game_id(umd, n, disc_id, sizeof(disc_id));
+                    kind = (enum ac_kind)classify_iso_by_id(disc_id);
+                }
+            }
+        }
+
+        if (kind == AC_UNKNOWN) {
+            snprintf(report, sizeof(report),
+                     "SKIP %s (unreadable image, id=[%s])\n", name, disc_id);
+            write_report_line(rfd, report);
+            continue;
+        }
+        folder = ac_kind_folder(kind);
+
+        snprintf(old_path, sizeof(old_path), "%s/%s", root, folder);
+        sceIoMkdir(old_path, 0777);
+
+        snprintf(old_path, sizeof(old_path), "%s/%s", root, name);
+        for (;;) {
+            if (suffix == 0) {
+                snprintf(new_path, sizeof(new_path), "%s/%s/%s",
+                         root, folder, name);
+            } else {
+                /* keep extension: Name_2.iso */
+                char *dot;
+                char base[128], ext[8];
+                snprintf(base, sizeof(base), "%s", name);
+                dot = strrchr(base, '.');
+                if (dot) {
+                    snprintf(ext, sizeof(ext), "%s", dot);
+                    *dot = 0;
+                } else {
+                    ext[0] = 0;
+                }
+                snprintf(new_path, sizeof(new_path), "%s/%s/%s_%d%s",
+                         root, folder, base, suffix, ext);
+            }
+            if (sceIoGetstat(new_path, NULL) < 0) break;
+            suffix++;
+            if (suffix > 99) break;
+        }
+        if (suffix > 99) continue;
+
+        if (sceIoRename(old_path, new_path) >= 0) {
+            moved++;
+            snprintf(report, sizeof(report),
+                     "MOVE %s -> %s/  [UMD id=%s]\n", name, folder, disc_id);
+        } else {
+            snprintf(report, sizeof(report),
+                     "FAIL %s (rename error, in use?)\n", name);
+        }
+        write_report_line(rfd, report);
+    }
+    sceIoDclose(dfd);
+    return moved;
+}
+
+/* ── entry ───────────────────────────────────────────────── */
+
+int autocat_run_all(void)
+{
+    int root_idx;
+    SceUID rfd;
+    char report[256];
+
+    /* pick ms0: or ef0: (PSP Go) */
+    rfd = sceIoOpen(REPORT_PATH,
+                    PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+
+    for (root_idx = 0; root_idx < 2; root_idx++) {
+        const char *base = game_roots[root_idx];
+        char game_root[128], iso_root[128];
+
+        snprintf(game_root, sizeof(game_root), "%s/PSP/GAME", base);
+        snprintf(iso_root, sizeof(iso_root), "%s/ISO", base);
+
+        if (sceIoGetstat(game_root, NULL) < 0 &&
+            sceIoGetstat(iso_root, NULL) < 0)
+            continue; /* device not present */
+
+        snprintf(report, sizeof(report),
+                 "\n== AutoCat run on %s ==\n", base);
+        write_report_line(rfd, report);
+
+        organize_eboots(game_root, rfd);
+        organize_iso(iso_root, rfd);
+    }
+
     if (rfd >= 0) sceIoClose(rfd);
-    return moved ? 1 : 0; /* nonzero = something was organized this run */
+    return 0;
 }

@@ -61,8 +61,10 @@ enum ac_kind classify_game(const char *category,
                            const char *disc_id,
                            const char *title)
 {
-    /* PS1: category PG, or classic Sony ID prefix (SLUS, SLES, SCUS, ...) */
-    if (category && strcmp(category, "PG") == 0) return AC_PS1;
+    /* PS1: category PG (PSN) or ME (POP-FE/PSX2PSP converters),
+       or classic Sony ID prefix (SLUS, SLES, SCUS, ...) */
+    if (category && (strcmp(category, "PG") == 0 ||
+                     strcmp(category, "ME") == 0)) return AC_PS1;
     if (disc_id && (starts_with_ci(disc_id, "SL") ||
                     starts_with_ci(disc_id, "SC"))) {
         /* SL/SC prefixes are almost always PS1 (SLUS, SLES, SCUS, ...) */

@@ -5,9 +5,16 @@
  * abort() (pulled in via stdio error paths like snprintf) can't find
  * _exit/_kill/_getpid. Provide the standard minimal set. These are
  * never called in normal operation — the plugin has no console I/O.
+ *
+ * _sbrk backs malloc over a fixed static arena (needed by the CSO
+ * reader's transient block buffers).
  */
 
 #include <sys/types.h>
+
+static char heap_arena[512 * 1024];
+static char *heap_cur = heap_arena;
+static char *heap_end = heap_arena + sizeof(heap_arena);
 
 void _exit(int status)
 {
@@ -29,8 +36,10 @@ int _kill(int pid, int sig)
 
 void *_sbrk(ptrdiff_t incr)
 {
-    (void)incr;
-    return (void *)-1; /* no heap growth — plugin uses static buffers */
+    char *prev = heap_cur;
+    if (incr > (heap_end - heap_cur)) return (void *)-1;
+    heap_cur += incr;
+    return prev;
 }
 
 int _write(int fd, const void *buf, size_t count)

@@ -29,7 +29,7 @@ int main(void)
      */
     unsigned char sfo[256];
     memset(sfo, 0, sizeof(sfo));
-    sfo[0]='P'; sfo[1]='S'; sfo[2]='F';
+    sfo[0]=0x00; sfo[1]='P'; sfo[2]='S'; sfo[3]='F';  /* LE magic 0x46535000 */
     /* version */
     sfo[4]=1; sfo[5]=0; sfo[6]=0; sfo[7]=1;
     /* key_table_start = 20 + 32 = 52 */
@@ -80,6 +80,9 @@ int main(void)
     /* bad magic */
     sfo[0]='X';
     check(sfo_parse(sfo, sizeof(sfo), entries, 8) < 0, "bad magic rejected");
+    /* bad magic offset-3 (u32 LE compare must fail too) */
+    sfo[0]=0x00; sfo[1]='P'; sfo[2]='S'; sfo[3]='X';
+    check(sfo_parse(sfo, sizeof(sfo), entries, 8) < 0, "bad magic u32 rejected");
 
     printf("\n%s (%d failures)\n", failures ? "TESTS FAILED" : "ALL TESTS PASSED", failures);
     return failures ? 1 : 0;

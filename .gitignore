@@ -7,4 +7,5 @@ autocat.prx
 *.zip
 test/test_classify
 test/test_sfo
+test/test_isocd
 .PSPSDK

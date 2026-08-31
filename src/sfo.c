@@ -12,7 +12,7 @@
 
 #include "sfo.h"
 
-#define SFO_MAGIC 0x46535000u /* "PSF" */
+#define SFO_MAGIC 0x46535000u /* 00 50 53 46 ("PSF" LE) — verified against real eboots */
 
 #define KEY_TABLE_OFF 8
 #define DATA_TABLE_OFF 12
@@ -26,8 +26,9 @@ int sfo_parse(const unsigned char *buf, unsigned int size,
 
     if (size < 20) return -1;
 
-    /* magic bytes little-endian: 00 50 53 46 == "PSF" */
-    if (buf[0] != 'P' || buf[1] != 'S' || buf[2] != 'F') return -1;
+    /* magic is a little-endian u32: bytes are 00 50 53 46 */
+    if (buf[0] != 0x00 || buf[1] != 'P' || buf[2] != 'S' || buf[3] != 'F')
+        return -1;
 
     /* key_table_start, data_table_start, entries */
     key_table = buf[8] | (buf[9] << 8) | (buf[10] << 16) | (buf[11] << 24);

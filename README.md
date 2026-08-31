@@ -2,17 +2,27 @@
 
 Inspired by **Game Categories Lite** (Bubbletune / codestation), but automatic: where GCLite required you to *manually* create `CAT_` folders and drag games into them, **AutoCat does it for you** at boot.
 
-Scans `ms0:/PSP/GAME`, reads each game's `EBOOT.PBP` → `PARAM.SFO`, classifies it, and physically renames it into the right category folder. The XMB natively renders subfolders as category folders, so **no vsh patching is needed — works on any CFW** (PRO, ME, ARK...).
+Scans **`/PSP/GAME`** (EBOOT.PBP games and homebrew) **and `/ISO`** (.iso/.cso UMD rips), reads real metadata, classifies, and physically renames each game into the right category folder. The XMB natively renders subfolders as category folders, so **no vsh patching is needed — works on any CFW** (PRO, ME, ARK...). PRO/ME even merge same-named categories between `/PSP/GAME` and `/ISO` on the XMB.
+
+## What gets categorized
+
+| Source | How it's read |
+|---|---|
+| `/PSP/GAME/<game>/EBOOT.PBP` | `PARAM.SFO` (CATEGORY, DISC_ID, TITLE) |
+| `/ISO/*.iso` | ISO9660 → `UMD_DATA.BIN` game id |
+| `/ISO/*.cso` | CSO decompression (zlib) → game id |
+
+All recognized PS1 eboots — including POP-FE / PSX2PSP conversions — land in the PS1 category. Covers the POP-FE `ME` category, PSN's `PG`, and the classic `SL*`/`SC*` disc prefixes.
 
 ## Category folders
 
 | Folder | What goes in it |
 |---|---|
 | `CAT_01_PSP` | Official PSP games (CATEGORY=MS/UG/MG, IDs UL*, UC*, NPU*/NPE*/NPH*) |
-| `CAT_02_PS1` | PSone classics (CATEGORY=PG, IDs SL*, SC*) |
+| `CAT_02_PS1` | PSone classics (CATEGORY=PG/ME, IDs SL*, SC*) |
 | `CAT_03_Emulators` | Recognized by title (gPSP, Snes9xTYL, NesterJ, Daedalus, mGBA, CPS1/2PSP...) |
 | `CAT_04_Homebrew` | Everything else |
-| `CAT_99_Uncategorized` | Unreadable EBOOTs — left in place, noted in the report |
+| `CAT_99_Uncategorized` | Unreadable EBOOTs/ISOs — left in place, noted in the report |
 
 Numeric prefix = XMB sort order. `CAT_` prefix = compatible with GCLite conventions (and with GCL's filter/sorting if you run both).
 
@@ -31,10 +41,10 @@ Numeric prefix = XMB sort order. `CAT_` prefix = compatible with GCLite conventi
 
 ## Safety
 
-- **Idempotent**: already-categorized games are never touched — only loose games in `/PSP/GAME` get sorted
-- Never touches: hidden dirs, non-game dirs, DLC, existing `CAT_*` or `XX_*` folders, `/ISO`, saves
-- Name collisions get `_2`, `_3`... suffixes instead of clobbering
-- If an `EBOOT.PBP` can't be parsed it's left exactly where it is
+- **Idempotent**: already-categorized games (`CAT_*` / `XX_*` folders) are never touched — only loose games get sorted
+- Never touches: hidden dirs, non-game dirs, DLC, `/ISO` subfolders it doesn't recognize, saves
+- Name collisions get `_2`, `_3`... suffixes instead of clobbering (ISO extensions preserved: `Game_2.iso`)
+- If an `EBOOT.PBP` or ISO/CSO can't be parsed it's left exactly where it is
 - Removing `autocat.prx` from `vsh.txt` undoes nothing — your games stay in their new folders (which is the point)
 
 ## Note

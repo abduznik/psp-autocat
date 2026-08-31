@@ -1,4 +1,4 @@
-export RELVER := 1.0
+export RELVER := 1.1
 
 TARGET   := autocat
 BUILD_DIR := build
@@ -8,6 +8,8 @@ OBJS := $(SRC_DIR)/main.o \
         $(SRC_DIR)/autocat.o \
         $(SRC_DIR)/sfo.o \
         $(SRC_DIR)/classify.o \
+        $(SRC_DIR)/isocd.o \
+        $(SRC_DIR)/cso.o \
         $(SRC_DIR)/sysstubs.o
 
 INCDIR := $(SRC_DIR)
@@ -22,7 +24,7 @@ ASFLAGS  := $(CFLAGS)
 LDFLAGS := -nostartfiles
 
 LIBDIR :=
-LIBS   :=
+LIBS   := -lz
 
 BUILD_PRX   = 1
 PRX_EXPORTS := exports.exp
@@ -43,15 +45,19 @@ TEST_CC ?= cc
 # NOTE: 'test' must be .PHONY — the test/ directory would otherwise
 # shadow the target and make would say "up to date" without running.
 .PHONY: test pack release
-test: test/test_classify test/test_sfo
+test: test/test_classify test/test_sfo test/test_isocd
 	./test/test_classify
 	./test/test_sfo
+	./test/test_isocd
 
 test/test_classify: test/test_classify.c src/sfo.c src/classify.c src/sfo.h src/classify.h
 	$(TEST_CC) -Isrc -o $@ $< src/sfo.c src/classify.c
 
 test/test_sfo: test/test_sfo.c src/sfo.c src/sfo.h
 	$(TEST_CC) -Isrc -o $@ $< src/sfo.c
+
+test/test_isocd: test/test_isocd.c src/isocd.c src/classify.c src/isocd.h src/classify.h
+	$(TEST_CC) -Isrc -o $@ $< src/isocd.c src/classify.c
 
 # ── Host-side release packaging (zip on CI runner) ───────
 # NOTE: pack must NOT depend on all — CI builds the PRX in Docker first,
