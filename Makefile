@@ -7,7 +7,8 @@ SRC_DIR  := src
 OBJS := $(SRC_DIR)/main.o \
         $(SRC_DIR)/autocat.o \
         $(SRC_DIR)/sfo.o \
-        $(SRC_DIR)/classify.o
+        $(SRC_DIR)/classify.o \
+        $(SRC_DIR)/sysstubs.o
 
 INCDIR := $(SRC_DIR)
 CFLAGS := -O2 -G0 -Wall \
