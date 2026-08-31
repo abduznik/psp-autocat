@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.elf
+autocat.prx
+*.zip
+test/test_classify
+test/test_sfo
+.PSPSDK
