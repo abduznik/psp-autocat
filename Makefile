@@ -37,8 +37,14 @@ PSPSDK := $(shell psp-config --pspsdk-path 2>/dev/null)
 # Non-fatal: allows host-side 'make test'/'make pack' without pspdev
 -include $(PSPSDK)/lib/build.mak
 
-release: clean all favtool-build
-	@echo "==> Built $(TARGET).prx + favtool/EBOOT.PBP (v$(RELVER))"
+release: clean all movedriver-build favtool-build
+	@echo "==> Built $(TARGET).prx + favtool/EBOOT.PBP + movedriver.prx (v$(RELVER))"
+
+# movedriver must build (and generate its import stub) before favtool,
+# since favtool links against movedriver-stub.S to call into it.
+movedriver-build:
+	$(MAKE) -C movedriver
+	$(MAKE) -C movedriver stub
 
 favtool-build:
 	$(MAKE) -C favtool
@@ -48,7 +54,7 @@ TEST_CC ?= cc
 
 # NOTE: 'test' must be .PHONY — the test/ directory would otherwise
 # shadow the target and make would say "up to date" without running.
-.PHONY: test pack release favtool-build
+.PHONY: test pack release favtool-build movedriver-build
 test: test/test_classify test/test_sfo test/test_isocd test/test_genre
 	./test/test_classify
 	./test/test_sfo
@@ -77,6 +83,9 @@ pack:
 	echo "ms0:/seplugins/$(TARGET).prx 1" > $(BUILD_DIR)/temp/seplugins/vsh.txt
 	if [ -f favtool/EBOOT.PBP ]; then \
 		cp favtool/EBOOT.PBP "$(BUILD_DIR)/temp/PSP/GAME/AutoCat Favorites/"; \
+	fi
+	if [ -f movedriver/movedriver.prx ]; then \
+		cp movedriver/movedriver.prx "$(BUILD_DIR)/temp/PSP/GAME/AutoCat Favorites/"; \
 	fi
 	cp README.md $(BUILD_DIR)/temp/
 	cd $(BUILD_DIR)/temp && zip -r ../$(TARGET)-$(RELVER).zip *

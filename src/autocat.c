@@ -191,11 +191,31 @@ static void write_report_line(SceUID unused_rfd, const char *line)
     sceIoClose(fd);
 }
 
-/* ── copy+delete move (sceIoRename doesn't support cross-directory
- * moves on this CFW's FAT driver — confirmed on real hardware: same-
- * directory rename succeeds, cross-directory rename always fails
- * with 0x80010011/FILE_ALREADY_EXISTS regardless of whether the
+/* ── move: fast privileged rename if available, else copy+delete ──
+ * (plain sceIoRename doesn't support cross-directory moves on this
+ * CFW's FAT driver — confirmed on real hardware: same-directory
+ * rename succeeds, cross-directory rename always fails with
+ * 0x80010011/FILE_ALREADY_EXISTS regardless of whether the
  * destination actually exists) ─────────────────────────────────── */
+
+static int (*g_fast_rename)(const char *, const char *) = NULL;
+
+void autocat_set_fast_rename(int (*fast_rename)(const char *, const char *))
+{
+    g_fast_rename = fast_rename;
+}
+
+/* Try the fast path first (privileged rename, if registered), fall
+ * back to sceIoRename (works for same-directory), then let the
+ * caller fall back further to copy+delete. */
+static int try_rename(const char *old_path, const char *new_path)
+{
+    if (g_fast_rename) {
+        int rc = g_fast_rename(old_path, new_path);
+        if (rc >= 0) return rc;
+    }
+    return sceIoRename(old_path, new_path);
+}
 
 #define COPY_CHUNK 65536
 
@@ -238,6 +258,11 @@ static int move_dir_tree(const char *src_dir, const char *dst_dir)
     SceUID dfd;
     SceIoDirent dir;
 
+    /* try one whole-directory rename first — if it works (privileged
+     * fast_rename, or a filesystem that does support cross-directory
+     * rename after all), we're done instantly with zero copying. */
+    if (try_rename(src_dir, dst_dir) >= 0) return 0;
+
     if (sceIoMkdir(dst_dir, 0777) < 0 && sceIoGetstat(dst_dir, NULL) < 0)
         return -1; /* couldn't create and it doesn't already exist */
 
@@ -258,7 +283,8 @@ static int move_dir_tree(const char *src_dir, const char *dst_dir)
                 return -1;
             }
         } else {
-            if (copy_file(src_path, dst_path) != 0) {
+            if (try_rename(src_path, dst_path) < 0 &&
+                copy_file(src_path, dst_path) != 0) {
                 sceIoDclose(dfd);
                 return -1;
             }
@@ -286,9 +312,11 @@ static int move_dir_tree(const char *src_dir, const char *dst_dir)
     return 0;
 }
 
-/* Move a single file (ISO/CSO) via copy+delete. Returns 0 on success. */
+/* Move a single file (ISO/CSO): fast rename if available/works,
+ * otherwise copy+delete. Returns 0 on success. */
 static int move_file(const char *src_path, const char *dst_path)
 {
+    if (try_rename(src_path, dst_path) >= 0) return 0;
     if (copy_file(src_path, dst_path) != 0) return -1;
     sceIoRemove(src_path);
     return 0;

@@ -1,5 +1,5 @@
 TARGET   := favtool
-OBJS     := favtool.o autocat.o sfo.o classify.o genre.o isocd.o cso.o
+OBJS     := favtool.o autocat.o sfo.o classify.o genre.o isocd.o cso.o movedriver-stub.o
 
 VPATH   := ../src
 INCDIR  := ../src
@@ -8,7 +8,10 @@ CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS := $(CFLAGS)
 
 LIBDIR :=
-LIBS   := -lpspdebug -lpspdisplay -lpspge -lpspctrl -lz
+# -lpspkubridge: kuKernelLoadModule, for loading movedriver.prx (a
+# kernel-mode helper for privileged sceIoRename) from this user-mode
+# homebrew on demand. Ships as a standard part of the PSPSDK.
+LIBS   := -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspkubridge -lz
 
 BUILD_PRX = 0
 
