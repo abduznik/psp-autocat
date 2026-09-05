@@ -187,13 +187,18 @@ static int organize_eboots(const char *root, SceUID rfd)
     SceUID dfd;
     SceIoDirent dir;
     int moved = 0;
+    int raw_entries = 0;
     char report[256];
 
     dfd = sceIoDopen(root);
+    snprintf(report, sizeof(report), "DEBUG organize_eboots(%s) dopen=%s\n",
+             root, dfd >= 0 ? "OK" : "FAILED");
+    write_report_line(rfd, report);
     if (dfd < 0) return 0;
 
     while (sceIoDread(dfd, &dir) > 0) {
         const char *name = dir.d_name;
+        raw_entries++;
         /* static: 4KB sfo won't fit on the VSH plugin stack */
         static unsigned char sfo[4096];
         sfo_entry_t entries[32];
@@ -273,6 +278,10 @@ static int organize_eboots(const char *root, SceUID rfd)
         write_report_line(rfd, report);
     }
     sceIoDclose(dfd);
+    snprintf(report, sizeof(report),
+             "DEBUG organize_eboots(%s) raw_entries=%d moved=%d\n",
+             root, raw_entries, moved);
+    write_report_line(rfd, report);
     return moved;
 }
 
