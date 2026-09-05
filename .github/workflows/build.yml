@@ -31,6 +31,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: DEBUG check for kubridge in pspdev image
+        run: |
+          docker run --rm pspdev/pspdev sh -c "find /usr/local/pspdev -iname '*kubridge*' -o -iname '*kernel_functions*' 2>/dev/null; echo ---; find /usr/local/pspdev -iname 'libpspsystemctrl*'"
+
       - name: Build PRX via Docker
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" -w "/src" pspdev/pspdev make release
