@@ -22,7 +22,6 @@
  */
 
 #include <pspkernel.h>
-#include <pspinit.h>
 #include <pspdebug.h>
 #include <pspctrl.h>
 #include <pspiofilemgr.h>
@@ -31,6 +30,13 @@
 #include <stdio.h>
 
 #include "autocat.h"
+
+/* Must match the folder name this app is actually packaged/installed
+ * under (see Makefile's PSP_EBOOT_TITLE and the root Makefile's pack
+ * target, and README's install instructions) — extract_parent_folder_name()
+ * in autocat.c compares against this to avoid ever renaming/moving the
+ * folder this very executable is running from. */
+#define FAVTOOL_OWN_FOLDER_NAME "AutoCat Favorites"
 
 PSP_MODULE_INFO("AutoCatFavorites", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -376,11 +382,17 @@ int main(void)
             printf("autocat.prx, just from a normal game process instead\n");
             printf("of a boot-time plugin. Please wait.\n");
             sceDisplayWaitVblankStart();
-            /* Critical: pass our own running EBOOT's path so
-             * autocat_run_all() never renames/moves the folder we're
-             * currently executing from — doing that to a live process
-             * is what caused a real crash/shutdown on real hardware. */
-            autocat_run_all(sceKernelInitFileName());
+            /* Critical: tell autocat_run_all() our own folder name so
+             * it never renames/moves the directory we're currently
+             * executing from — doing that to a live process is what
+             * caused a real crash/shutdown on real hardware.
+             * sceKernelInitFileName() would be the "proper" way to
+             * discover this at runtime, but it needs a kernel-lib link
+             * this build doesn't currently carry; a compile-time
+             * constant is simpler and just as correct as long as this
+             * always ships under the folder name the Makefile/README
+             * use ("AutoCat Favorites") — see FAVTOOL_OWN_FOLDER_NAME. */
+            autocat_run_all(FAVTOOL_OWN_FOLDER_NAME "/EBOOT.PBP");
             scan_all();
             cursor = 0;
             top = 0;

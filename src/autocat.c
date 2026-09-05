@@ -528,7 +528,12 @@ static int promote_favorites(const char *root, SceUID rfd)
 }
 
 /* Extract the folder-name segment from ".../<folder>/EBOOT.PBP" (or
- * any trailing-filename path). Returns "" if it can't find one. */
+ * any trailing-filename path). If there's no earlier "/" before that
+ * one (e.g. "AutoCat Favorites/EBOOT.PBP" with no device/dir prefix),
+ * treat the start of the string as the folder name's start instead of
+ * giving up — a caller passing a short, prefix-less path like that is
+ * a legitimate case (see favtool.c), not malformed input.
+ * Returns "" only for a path with no "/" at all, or NULL/empty. */
 static void extract_parent_folder_name(const char *path, char *out, int outsize)
 {
     const char *slash1, *slash2;
@@ -549,11 +554,10 @@ static void extract_parent_folder_name(const char *path, char *out, int outsize)
             p++;
         }
     }
-    if (!slash2) return;
 
-    len = (size_t)(slash1 - (slash2 + 1));
+    len = (size_t)(slash1 - (slash2 ? slash2 + 1 : path));
     if (len >= (size_t)outsize) len = (size_t)outsize - 1;
-    memcpy(out, slash2 + 1, len);
+    memcpy(out, slash2 ? slash2 + 1 : path, len);
     out[len] = 0;
 }
 
