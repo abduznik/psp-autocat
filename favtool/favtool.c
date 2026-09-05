@@ -375,7 +375,11 @@ int main(void)
             printf("autocat.prx, just from a normal game process instead\n");
             printf("of a boot-time plugin. Please wait.\n");
             sceDisplayWaitVblankStart();
-            autocat_run_all();
+            /* Critical: pass our own running EBOOT's path so
+             * autocat_run_all() never renames/moves the folder we're
+             * currently executing from — doing that to a live process
+             * is what caused a real crash/shutdown on real hardware. */
+            autocat_run_all(sceKernelInitFileName());
             scan_all();
             cursor = 0;
             top = 0;

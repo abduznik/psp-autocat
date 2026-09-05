@@ -58,7 +58,7 @@ static int autocat_thread(SceSize args, void *argp)
     /* give ms0:/ef0: a moment to finish mounting before we touch it */
     sceKernelDelayThread(3 * 1000 * 1000);
     log_line("BOOT: worker thread running autocat_run_all()\n");
-    autocat_run_all();
+    autocat_run_all(NULL); /* vsh.txt plugin isn't itself a /PSP/GAME entry */
     log_line("BOOT: worker thread done\n");
     sceKernelExitThread(0);
     return 0;

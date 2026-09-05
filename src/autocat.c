@@ -182,7 +182,8 @@ static void write_report_line(SceUID rfd, const char *line)
     }
 }
 
-static int organize_eboots(const char *root, SceUID rfd)
+static int organize_eboots(const char *root, SceUID rfd,
+                           const char *self_folder_name)
 {
     SceUID dfd;
     SceIoDirent dir;
@@ -208,6 +209,11 @@ static int organize_eboots(const char *root, SceUID rfd)
         char folder[64];
         char old_path[140], new_path[140];
         int suffix = 0;
+
+        /* never touch the folder we're currently running from — renaming
+         * a homebrew's own backing directory out from under its running
+         * executable is what caused a real crash/shutdown on hardware */
+        if (self_folder_name && strcmp(name, self_folder_name) == 0) continue;
 
         /* skip junk and already-organized entries (Favorites folder
          * excepted below via is_locked_category, but that's walked in
@@ -521,13 +527,46 @@ static int promote_favorites(const char *root, SceUID rfd)
     return promoted;
 }
 
+/* Extract the folder-name segment from ".../<folder>/EBOOT.PBP" (or
+ * any trailing-filename path). Returns "" if it can't find one. */
+static void extract_parent_folder_name(const char *path, char *out, int outsize)
+{
+    const char *slash1, *slash2;
+    size_t len;
+
+    out[0] = 0;
+    if (!path || !*path) return;
+
+    slash1 = strrchr(path, '/');
+    if (!slash1) return; /* no filename component */
+
+    /* search for the previous slash before slash1 */
+    slash2 = NULL;
+    {
+        const char *p = path;
+        while (p < slash1) {
+            if (*p == '/') slash2 = p;
+            p++;
+        }
+    }
+    if (!slash2) return;
+
+    len = (size_t)(slash1 - (slash2 + 1));
+    if (len >= (size_t)outsize) len = (size_t)outsize - 1;
+    memcpy(out, slash2 + 1, len);
+    out[len] = 0;
+}
+
 /* ── entry ───────────────────────────────────────────────── */
 
-int autocat_run_all(void)
+int autocat_run_all(const char *self_path)
 {
     int root_idx;
     SceUID rfd;
     char report[256];
+    char self_folder_name[128];
+
+    extract_parent_folder_name(self_path, self_folder_name, sizeof(self_folder_name));
 
     rfd = sceIoOpen(REPORT_PATH,
                     PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
@@ -554,7 +593,8 @@ int autocat_run_all(void)
         promote_favorites(game_root, rfd);
         promote_favorites(iso_root, rfd);
 
-        organize_eboots(game_root, rfd);
+        organize_eboots(game_root, rfd,
+                        self_folder_name[0] ? self_folder_name : NULL);
         organize_iso(iso_root, rfd);
     }
 
