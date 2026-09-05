@@ -401,6 +401,44 @@ static void scan_all(void)
 
 #define VISIBLE_ROWS 24
 
+static int sort_cancelled = 0;
+
+/* Called from inside autocat_run_all() (via copy_file's chunk loop)
+ * while copying a file that needs the slow cross-directory copy path.
+ * Renders live progress and polls START so the user can bail out
+ * mid-copy without waiting for the whole library. Returning nonzero
+ * tells autocat_run_all to abort the copy (and the rest of the sort)
+ * cleanly — the partial destination file is removed, the original is
+ * left untouched, so a later run just picks up from there. */
+static int sort_progress_cb(const char *name, unsigned int done, unsigned int total)
+{
+    SceCtrlData pad;
+    static unsigned int last_pct = 0xFFFFFFFF;
+    unsigned int pct = total ? (done * 100u) / total : 0;
+
+    sceCtrlReadBufferPositive(&pad, 1);
+    if (pad.Buttons & PSP_CTRL_START) {
+        sort_cancelled = 1;
+        return 1;
+    }
+
+    /* only redraw when the percentage actually changes -- avoids
+     * hammering the display driver every 64KB chunk */
+    if (pct == last_pct && total != 0) return 0;
+    last_pct = pct;
+
+    pspDebugScreenSetXY(0, 8);
+    printf("Copying: %.50s%*s\n", name, 50, "");
+    if (total > 1024 * 1024) {
+        printf("%u%%  (%u MB / %u MB)   START to stop here safely%*s\n",
+               pct, done / (1024 * 1024), total / (1024 * 1024), 20, "");
+    } else {
+        printf("%u%%   START to stop here safely%*s\n", pct, 30, "");
+    }
+    sceDisplayWaitVblankStart();
+    return 0;
+}
+
 int main(void)
 {
     SceCtrlData pad, last_pad;
@@ -497,19 +535,24 @@ int main(void)
         }
         if (pressed & PSP_CTRL_TRIANGLE) {
             pspDebugScreenSetXY(0, 0);
-            printf("Sorting... this runs the same classify/move logic as\n");
-            printf("autocat.prx, just from a normal game process instead\n");
-            printf("of a boot-time plugin. Please wait.\n");
+            printf("Sorting... games already in a CAT_xx folder are never\n");
+            printf("touched, so re-running this only costs time for what's\n");
+            printf("still unsorted. Cross-directory moves have to copy the\n");
+            printf("whole file (confirmed: this CFW's sceIoRename can't do\n");
+            printf("cross-directory moves) -- START cancels safely at any\n");
+            printf("point; whatever's already moved stays moved, and the\n");
+            printf("file being copied when you cancel is left untouched.\n");
 
+            /* movedriver.prx: confirmed on real hardware that it does NOT
+             * help -- same 0x80010011 error as plain sceIoRename even with
+             * elevated privilege, so this CFW's cross-directory rename
+             * limit isn't a permission check. Still loaded/registered in
+             * case it ever does help on a different CFW, but no promises
+             * made to the user about speed here anymore. */
             load_movedriver();
-            if (movedriver_ready) {
-                autocat_set_fast_rename(pspIoRename);
-                printf("Fast move driver loaded -- moves should be instant.\n");
-            } else {
-                autocat_set_fast_rename(NULL);
-                printf("Fast move driver unavailable -- falling back to\n");
-                printf("slower copy+delete for cross-directory moves.\n");
-            }
+            autocat_set_fast_rename(movedriver_ready ? pspIoRename : NULL);
+            sort_cancelled = 0;
+            autocat_set_progress_callback(sort_progress_cb);
             sceDisplayWaitVblankStart();
             /* Critical: tell autocat_run_all() our own folder name so
              * it never renames/moves the directory we're currently
@@ -526,8 +569,12 @@ int main(void)
             cursor = 0;
             top = 0;
             pspDebugScreenSetXY(0, 0);
-            printf("Sort complete. See ms0:/seplugins/autocat_report.txt\n");
-            printf("for a full move-by-move log. Press X to continue.\n\n");
+            printf("%s\n\n", sort_cancelled ?
+                   "Sort stopped -- your progress is saved, run again to" :
+                   "Sort complete. See ms0:/seplugins/autocat_report.txt");
+            printf("%s\n\n", sort_cancelled ?
+                   "continue where it left off." :
+                   "for a full move-by-move log. Press X to continue.");
             sceDisplayWaitVblankStart();
             for (;;) {
                 sceCtrlReadBufferPositive(&pad, 1);

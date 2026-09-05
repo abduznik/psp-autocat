@@ -10,6 +10,21 @@
  * return >= 0 on success. Pass NULL to go back to copy+delete only. */
 void autocat_set_fast_rename(int (*fast_rename)(const char *, const char *));
 
+/* Progress callback, invoked periodically while copying a file (the
+ * slow path — cross-directory moves with no fast_rename available).
+ * name is the current source filename (not a full path), bytes_done/
+ * bytes_total describe progress through that one file. Called with
+ * bytes_total == 0 right before starting a new file (so the UI can
+ * reset/print the name once) and periodically as bytes accumulate.
+ * Return 0 to continue, nonzero to abort the current copy — the
+ * partially-copied destination file is deleted and the original is
+ * left untouched, then the whole sort stops (autocat_run_all returns
+ * early) so a later run can pick up where this one left off. Pass
+ * NULL to disable (no progress reporting, can't be cancelled mid-copy). */
+void autocat_set_progress_callback(int (*cb)(const char *name,
+                                             unsigned int bytes_done,
+                                             unsigned int bytes_total));
+
 /* Run the auto-categorizer over the game folder.
  *
  * self_path: full path of the caller's own running EBOOT.PBP (e.g.

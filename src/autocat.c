@@ -234,18 +234,44 @@ static int try_rename(const char *old_path, const char *new_path)
 
 #define COPY_CHUNK 65536
 
-/* Copy a single file byte-for-byte. Returns 0 on success. Leaves a
- * partial destination file on failure — caller doesn't delete the
- * source unless this succeeds, so nothing is lost either way. */
+static int (*g_progress_cb)(const char *, unsigned int, unsigned int) = NULL;
+static int g_abort_requested = 0;
+
+void autocat_set_progress_callback(int (*cb)(const char *, unsigned int, unsigned int))
+{
+    g_progress_cb = cb;
+    g_abort_requested = 0;
+}
+
+/* True if this is the base filename (no directory) of src_path. */
+static const char *basename_of(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+/* Copy a single file byte-for-byte, reporting progress every chunk if
+ * a callback is registered. Returns 0 on success, -1 on I/O error,
+ * -2 if the callback asked to cancel (partial destination file is
+ * removed either way on failure — the source is never touched unless
+ * this returns 0, so a cancel/failure can never lose data, only leave
+ * the game unsorted for next time). */
 static int copy_file(const char *src_path, const char *dst_path)
 {
     SceUID sfd, dfd;
     static unsigned char buf[COPY_CHUNK];
     int n;
-    int ok = 1;
+    int ok = 1, cancelled = 0;
+    SceOff total = 0, done = 0;
 
     sfd = sceIoOpen(src_path, PSP_O_RDONLY, 0);
     if (sfd < 0) return -1;
+
+    if (g_progress_cb) {
+        total = sceIoLseek(sfd, 0, PSP_SEEK_END);
+        sceIoLseek(sfd, 0, PSP_SEEK_SET);
+        g_progress_cb(basename_of(src_path), 0, (unsigned int)total);
+    }
 
     dfd = sceIoOpen(dst_path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (dfd < 0) {
@@ -258,11 +284,21 @@ static int copy_file(const char *src_path, const char *dst_path)
         if (n < 0) { ok = 0; break; }
         if (n == 0) break;
         if (sceIoWrite(dfd, buf, n) != n) { ok = 0; break; }
+        done += n;
+        if (g_progress_cb &&
+            g_progress_cb(basename_of(src_path), (unsigned int)done,
+                         (unsigned int)total) != 0) {
+            ok = 0;
+            cancelled = 1;
+            g_abort_requested = 1;
+            break;
+        }
     }
 
     sceIoClose(sfd);
     sceIoClose(dfd);
-    return ok ? 0 : -1;
+    if (!ok) sceIoRemove(dst_path); /* clean up partial copy */
+    return ok ? 0 : (cancelled ? -2 : -1);
 }
 
 /* Recursively copy a directory tree, then remove the source tree.
@@ -329,10 +365,15 @@ static int move_dir_tree(const char *src_dir, const char *dst_dir)
 
 /* Move a single file (ISO/CSO): fast rename if available/works,
  * otherwise copy+delete. Returns 0 on success. */
+/* Returns 0 on success, -1 on ordinary failure, -2 if the progress
+ * callback asked to cancel — callers should treat -2 as "stop the
+ * whole sort now", not just "this one file failed". */
 static int move_file(const char *src_path, const char *dst_path)
 {
+    int rc;
     if (try_rename(src_path, dst_path) >= 0) return 0;
-    if (copy_file(src_path, dst_path) != 0) return -1;
+    rc = copy_file(src_path, dst_path);
+    if (rc != 0) return rc;
     sceIoRemove(src_path);
     return 0;
 }
@@ -352,7 +393,7 @@ static int organize_eboots(const char *root, SceUID rfd,
     write_report_line(rfd, report);
     if (dfd < 0) return 0;
 
-    while (sceIoDread(dfd, &dir) > 0) {
+    while (!g_abort_requested && sceIoDread(dfd, &dir) > 0) {
         const char *name = dir.d_name;
         raw_entries++;
         /* static: 4KB sfo won't fit on the VSH plugin stack */
@@ -515,7 +556,7 @@ static int organize_iso(const char *root, SceUID rfd)
     write_report_line(rfd, report);
     if (dfd < 0) return 0;
 
-    while (sceIoDread(dfd, &dir) > 0) {
+    while (!g_abort_requested && sceIoDread(dfd, &dir) > 0) {
         const char *name = dir.d_name;
         int is_iso, is_cso;
         unsigned char umd[256];
