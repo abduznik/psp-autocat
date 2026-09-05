@@ -351,9 +351,13 @@ static int organize_iso(const char *root, SceUID rfd)
     SceUID dfd;
     SceIoDirent dir;
     int moved = 0;
+    int raw_entries = 0;
     char report[256];
 
     dfd = sceIoDopen(root);
+    snprintf(report, sizeof(report), "DEBUG organize_iso(%s) dopen=%s\n",
+             root, dfd >= 0 ? "OK" : "FAILED");
+    write_report_line(rfd, report);
     if (dfd < 0) return 0;
 
     while (sceIoDread(dfd, &dir) > 0) {
@@ -366,45 +370,72 @@ static int organize_iso(const char *root, SceUID rfd)
         char old_path[140], new_path[140];
         int n, suffix = 0;
 
+        raw_entries++;
+        snprintf(report, sizeof(report), "  ISO-ENTRY[%d] \"%s\"\n", raw_entries, name);
+        write_report_line(rfd, report);
+
         if (name[0] == '.') continue;
-        if (entry_is_dir(&dir.d_stat)) continue;
-        if (is_categorized(name)) continue;
+        if (entry_is_dir(&dir.d_stat)) {
+            write_report_line(rfd, "    -> skip (is a dir)\n");
+            continue;
+        }
+        if (is_categorized(name)) {
+            write_report_line(rfd, "    -> skip (already categorized)\n");
+            continue;
+        }
 
         is_iso = has_suffix(name, ".iso");
         is_cso = has_suffix(name, ".cso");
-        if (!is_iso && !is_cso) continue; /* only game rips */
+        if (!is_iso && !is_cso) {
+            write_report_line(rfd, "    -> skip (not .iso/.cso)\n");
+            continue; /* only game rips */
+        }
 
         disc_id[0] = 0;
         kind = AC_UNKNOWN;
 
         if (has_favorite_sidecar(root, name)) {
             kind = AC_FAVORITE;
+            write_report_line(rfd, "    favorite sidecar found\n");
         } else if (is_cso) {
             cso_ctx_t cso;
             char path[140];
             snprintf(path, sizeof(path), "%s/%s", root, name);
+            write_report_line(rfd, "    cso_open()...\n");
             if (cso_open(&cso, path) == 0) {
+                write_report_line(rfd, "    cso_open ok, isocd_read_umd_data()...\n");
                 n = isocd_read_umd_data(cso_read_sectors, &cso,
                                         umd, sizeof(umd));
+                snprintf(report, sizeof(report), "    isocd_read_umd_data returned %d\n", n);
+                write_report_line(rfd, report);
                 if (n > 0) {
                     isocd_extract_game_id(umd, n, disc_id, sizeof(disc_id));
                     kind = (enum ac_kind)classify_iso_by_id(disc_id);
                 }
                 cso_close(&cso);
+                write_report_line(rfd, "    cso_close done\n");
+            } else {
+                write_report_line(rfd, "    cso_open FAILED\n");
             }
         } else {
             iso_file_ctx fctx;
             char path[140];
             snprintf(path, sizeof(path), "%s/%s", root, name);
+            write_report_line(rfd, "    sceIoOpen(iso)...\n");
             fctx.fd = sceIoOpen(path, PSP_O_RDONLY, 0);
             if (fctx.fd >= 0) {
+                write_report_line(rfd, "    open ok, isocd_read_umd_data()...\n");
                 n = isocd_read_umd_data(iso_sector_read, &fctx,
                                         umd, sizeof(umd));
+                snprintf(report, sizeof(report), "    isocd_read_umd_data returned %d\n", n);
+                write_report_line(rfd, report);
                 sceIoClose(fctx.fd);
                 if (n > 0) {
                     isocd_extract_game_id(umd, n, disc_id, sizeof(disc_id));
                     kind = (enum ac_kind)classify_iso_by_id(disc_id);
                 }
+            } else {
+                write_report_line(rfd, "    sceIoOpen FAILED\n");
             }
         }
 
@@ -415,6 +446,7 @@ static int organize_iso(const char *root, SceUID rfd)
             continue;
         }
         folder = ac_kind_folder(kind);
+        write_report_line(rfd, "    making dirs, renaming...\n");
 
         snprintf(old_path, sizeof(old_path), "%s/%s", root, folder);
         sceIoMkdir(old_path, 0777);
@@ -445,6 +477,10 @@ static int organize_iso(const char *root, SceUID rfd)
         }
         if (suffix > 99) continue;
 
+        snprintf(report, sizeof(report), "    calling sceIoRename(%s -> %s)...\n",
+                 old_path, new_path);
+        write_report_line(rfd, report);
+
         if (sceIoRename(old_path, new_path) >= 0) {
             moved++;
             snprintf(report, sizeof(report),
@@ -455,7 +491,12 @@ static int organize_iso(const char *root, SceUID rfd)
         }
         write_report_line(rfd, report);
     }
+    write_report_line(rfd, "  (iso loop finished, no more dread entries)\n");
     sceIoDclose(dfd);
+    snprintf(report, sizeof(report),
+             "DEBUG organize_iso(%s) raw_entries=%d moved=%d\n",
+             root, raw_entries, moved);
+    write_report_line(rfd, report);
     return moved;
 }
 
