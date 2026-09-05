@@ -539,10 +539,14 @@ int autocat_run_all(void)
         snprintf(game_root, sizeof(game_root), "%s/PSP/GAME", base);
         snprintf(iso_root, sizeof(iso_root), "%s/ISO", base);
 
-        if (sceIoGetstat(game_root, NULL) < 0 &&
-            sceIoGetstat(iso_root, NULL) < 0)
-            continue; /* device not present */
-
+        /* Used to gate on sceIoGetstat(game_root/iso_root) here to
+         * skip a device that isn't present, but on real hardware that
+         * check itself was failing even though the paths definitely
+         * exist (organize_eboots's own sceIoDopen on the identical
+         * path succeeds). Drop the pre-check entirely — sceIoDopen
+         * already tells us if a directory is missing, and
+         * organize_eboots/organize_iso already handle that (dfd < 0
+         * -> return 0) without needing this to gate anything upfront. */
         snprintf(report, sizeof(report),
                  "\n== AutoCat run on %s ==\n", base);
         write_report_line(rfd, report);
