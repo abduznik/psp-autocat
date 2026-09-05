@@ -210,11 +210,26 @@ void autocat_set_fast_rename(int (*fast_rename)(const char *, const char *))
  * caller fall back further to copy+delete. */
 static int try_rename(const char *old_path, const char *new_path)
 {
+    char report[256];
+
     if (g_fast_rename) {
         int rc = g_fast_rename(old_path, new_path);
+        snprintf(report, sizeof(report),
+                 "    try_rename: fast_rename(%s) -> 0x%08x\n",
+                 new_path, (unsigned int)rc);
+        write_report_line(-1, report);
         if (rc >= 0) return rc;
+    } else {
+        write_report_line(-1, "    try_rename: no fast_rename registered\n");
     }
-    return sceIoRename(old_path, new_path);
+    {
+    int rc = sceIoRename(old_path, new_path);
+    snprintf(report, sizeof(report),
+             "    try_rename: sceIoRename(%s) -> 0x%08x\n",
+             new_path, (unsigned int)rc);
+    write_report_line(-1, report);
+    return rc;
+    }
 }
 
 #define COPY_CHUNK 65536

@@ -59,14 +59,38 @@ extern int pspIoRename(const char *oldname, const char *newname);
 
 static int movedriver_ready = 0;
 
+static void log_report(const char *line)
+{
+    SceUID fd = sceIoOpen("ms0:/seplugins/autocat_report.txt",
+                          PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+    if (fd < 0) return;
+    sceIoWrite(fd, line, strlen(line));
+    sceIoClose(fd);
+}
+
 static void load_movedriver(void)
 {
+    char report[192];
     int status;
     SceUID modid = kuKernelLoadModule(
         "ms0:/PSP/GAME/" FAVTOOL_OWN_FOLDER_NAME "/movedriver.prx", 0, NULL);
+    snprintf(report, sizeof(report),
+             "DEBUG kuKernelLoadModule(movedriver.prx) returned 0x%08x\n",
+             (unsigned int)modid);
+    log_report(report);
     if (modid < 0) return;
-    if (sceKernelStartModule(modid, 0, NULL, &status, NULL) < 0) return;
+
+    {
+    int rc = sceKernelStartModule(modid, 0, NULL, &status, NULL);
+    snprintf(report, sizeof(report),
+             "DEBUG sceKernelStartModule returned 0x%08x, status=0x%08x\n",
+             (unsigned int)rc, (unsigned int)status);
+    log_report(report);
+    if (rc < 0) return;
+    }
+
     movedriver_ready = 1;
+    log_report("DEBUG movedriver ready\n");
 }
 
 PSP_MODULE_INFO("AutoCatFavorites", 0, 1, 0);
