@@ -12,12 +12,33 @@
 #include <pspkernel.h>
 #include <pspmoduleinfo.h>
 #include <pspthreadman.h>
+#include <pspiofilemgr.h>
+#include <string.h>
 
 #include "autocat.h"
 
-PSP_MODULE_INFO("AutoCat", PSP_MODULE_USER, 1, 0);
+/* vsh.txt plugins run in the VSH's kernel partition; a PSP_MODULE_USER
+ * module loaded there can end up unable to reliably create/schedule its
+ * own threads or touch ms0: this early in boot. PSP_MODULE_KERNEL is
+ * the flag actually used by known-working vsh.txt plugins that do this
+ * kind of filesystem work (GCLite included). */
+PSP_MODULE_INFO("AutoCat", PSP_MODULE_KERNEL, 1, 0);
 PSP_MAIN_THREAD_ATTR(0);
 PSP_NO_CREATE_MAIN_THREAD();
+
+#define REPORT_PATH "ms0:/seplugins/autocat_report.txt"
+
+/* Breadcrumb logger, independent of autocat.c's own report writer —
+ * lets us see exactly how far module_start/the worker thread get even
+ * if something downstream fails silently. */
+static void log_line(const char *line)
+{
+    SceUID fd = sceIoOpen(REPORT_PATH,
+                          PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+    if (fd < 0) return;
+    sceIoWrite(fd, line, strlen(line));
+    sceIoClose(fd);
+}
 
 /* module_start runs synchronously on whoever is loading the module —
  * for a vsh.txt plugin that's the VSH's own plugin-loader thread. If we
@@ -30,9 +51,12 @@ static int autocat_thread(SceSize args, void *argp)
 {
     (void)args;
     (void)argp;
+    log_line("\nBOOT: worker thread started, waiting for storage to settle...\n");
     /* give ms0:/ef0: a moment to finish mounting before we touch it */
     sceKernelDelayThread(3 * 1000 * 1000);
+    log_line("BOOT: worker thread running autocat_run_all()\n");
     autocat_run_all();
+    log_line("BOOT: worker thread done\n");
     sceKernelExitThread(0);
     return 0;
 }
@@ -43,10 +67,19 @@ int module_start(SceSize args, void *argp)
     (void)args;
     (void)argp;
 
+    log_line("\nBOOT: module_start entered\n");
+
     thid = sceKernelCreateThread("autocat_worker", autocat_thread,
                                   0x18, 0x4000, 0, NULL);
-    if (thid >= 0)
-        sceKernelStartThread(thid, 0, NULL);
+    if (thid < 0) {
+        log_line("BOOT: sceKernelCreateThread FAILED\n");
+        return 0;
+    }
+    if (sceKernelStartThread(thid, 0, NULL) < 0) {
+        log_line("BOOT: sceKernelStartThread FAILED\n");
+    } else {
+        log_line("BOOT: worker thread started ok\n");
+    }
 
     return 0;
 }

@@ -34,6 +34,19 @@
 /* candidate device roots: ms0: first, then ef0: (PSP Go) */
 static const char *game_roots[2] = { "ms0:", "ef0:" };
 
+/* FIO_S_ISDIR(st_mode) is the textbook PSPSDK check, but on real
+ * hardware's FAT driver st_mode isn't reliably populated the same way
+ * emulators/host testing led us to expect — the official PSPSDK kernel
+ * sample (src/samples/kernel/fileio) checks st_attr & FIO_SO_IFDIR
+ * instead. Check both so this works regardless of which field the
+ * actual on-device IO driver fills in. */
+static int entry_is_dir(const SceIoStat *st)
+{
+    if (st->st_attr & FIO_SO_IFDIR) return 1;
+    if (FIO_S_ISDIR(st->st_mode)) return 1;
+    return 0;
+}
+
 /* ── helpers ─────────────────────────────────────────────── */
 
 static int is_categorized(const char *name)
@@ -192,7 +205,7 @@ static int organize_eboots(const char *root, SceUID rfd)
          * excepted below via is_locked_category, but that's walked in
          * the promote_favorites() pass, not here) */
         if (name[0] == '.') continue;
-        if (!FIO_S_ISDIR(dir.d_stat.st_mode)) continue;
+        if (!entry_is_dir(&dir.d_stat)) continue;
         if (is_categorized(name)) continue;
         if (!dir_has_eboot(root, name)) continue;
 
@@ -292,7 +305,7 @@ static int organize_iso(const char *root, SceUID rfd)
         int n, suffix = 0;
 
         if (name[0] == '.') continue;
-        if (FIO_S_ISDIR(dir.d_stat.st_mode)) continue;
+        if (entry_is_dir(&dir.d_stat)) continue;
         if (is_categorized(name)) continue;
 
         is_iso = has_suffix(name, ".iso");
@@ -449,7 +462,7 @@ static int promote_favorites(const char *root, SceUID rfd)
         char cat_path[140];
 
         if (cat_name[0] == '.') continue;
-        if (!FIO_S_ISDIR(cat_dir.d_stat.st_mode)) continue;
+        if (!entry_is_dir(&cat_dir.d_stat)) continue;
         if (!is_locked_category(cat_name)) continue; /* not a sorted folder */
         if (strcmp(cat_name, "CAT_99_Uncategorized") == 0) continue;
 
@@ -461,7 +474,7 @@ static int promote_favorites(const char *root, SceUID rfd)
             const char *name = dir.d_name;
             if (name[0] == '.') continue;
 
-            if (FIO_S_ISDIR(dir.d_stat.st_mode)) {
+            if (entry_is_dir(&dir.d_stat)) {
                 if (dir_has_favorite_marker(cat_path, name)) {
                     promoted += move_into_favorites(cat_path, name, rfd);
                     continue;
@@ -479,7 +492,7 @@ static int promote_favorites(const char *root, SceUID rfd)
                     while (sceIoDread(gdfd, &gdir) > 0) {
                         const char *gname = gdir.d_name;
                         if (gname[0] == '.') continue;
-                        if (!FIO_S_ISDIR(gdir.d_stat.st_mode)) continue;
+                        if (!entry_is_dir(&gdir.d_stat)) continue;
                         if (!dir_has_favorite_marker(genre_path, gname)) continue;
                         promoted += move_into_favorites(genre_path, gname, rfd);
                     }

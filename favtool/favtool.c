@@ -39,6 +39,19 @@ typedef struct {
 static entry_t entries[MAX_ENTRIES];
 static int entry_count = 0;
 
+/* FIO_S_ISDIR(st_mode) is the textbook PSPSDK check, but on real
+ * hardware's FAT driver st_mode isn't reliably populated the same way
+ * emulators/host testing led us to expect — the official PSPSDK kernel
+ * sample (src/samples/kernel/fileio) checks st_attr & FIO_SO_IFDIR
+ * instead. Check both so this works regardless of which field the
+ * actual on-device IO driver fills in. */
+static int entry_is_dir(const SceIoStat *st)
+{
+    if (st->st_attr & FIO_SO_IFDIR) return 1;
+    if (FIO_S_ISDIR(st->st_mode)) return 1;
+    return 0;
+}
+
 static const char *game_roots[2] = { "ms0:", "ef0:" };
 
 static int exit_request = 0;
@@ -193,7 +206,7 @@ static void scan_eboot_root(const char *root)
         SceIoStat st;
 
         if (name[0] == '.') continue;
-        if (!FIO_S_ISDIR(dir.d_stat.st_mode)) continue;
+        if (!entry_is_dir(&dir.d_stat)) continue;
 
         snprintf(eboot_path, sizeof(eboot_path), "%s/%s/EBOOT.PBP", root, name);
         if (sceIoGetstat(eboot_path, &st) >= 0) {
@@ -211,7 +224,7 @@ static void scan_eboot_root(const char *root)
                 const char *sname = sdir.d_name;
                 char seboot[256];
                 if (sname[0] == '.') continue;
-                if (!FIO_S_ISDIR(sdir.d_stat.st_mode)) continue;
+                if (!entry_is_dir(&sdir.d_stat)) continue;
                 snprintf(seboot, sizeof(seboot), "%s/%s/EBOOT.PBP", sub_path, sname);
                 if (sceIoGetstat(seboot, NULL) >= 0)
                     add_entry(sub_path, sname, 1);
@@ -234,7 +247,7 @@ static void scan_iso_root(const char *root)
 
         if (name[0] == '.') continue;
 
-        if (FIO_S_ISDIR(dir.d_stat.st_mode)) {
+        if (entry_is_dir(&dir.d_stat)) {
             if (strncmp(name, "CAT_", 4) == 0) {
                 SceUID sdfd;
                 SceIoDirent sdir;
@@ -245,7 +258,7 @@ static void scan_iso_root(const char *root)
                 while (sceIoDread(sdfd, &sdir) > 0) {
                     const char *sname = sdir.d_name;
                     if (sname[0] == '.') continue;
-                    if (FIO_S_ISDIR(sdir.d_stat.st_mode)) continue;
+                    if (entry_is_dir(&sdir.d_stat)) continue;
                     if (has_suffix(sname, ".iso") || has_suffix(sname, ".cso"))
                         add_entry(sub_path, sname, 0);
                 }
