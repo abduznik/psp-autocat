@@ -67,6 +67,7 @@ The repo also builds `autocat.prx`, a `vsh.txt` plugin meant to run the same sor
 - Never touches: hidden dirs, non-game dirs, DLC, `/ISO` subfolders it doesn't recognize, saves
 - Name collisions get `_2`, `_3`... suffixes instead of clobbering (ISO extensions preserved: `Game_2.iso`)
 - If an `EBOOT.PBP` or ISO/CSO can't be parsed it's left exactly where it is
+- Moves are copy-then-delete, not a plain rename (see note below) — the original is only ever removed *after* the copy to the new location fully succeeds, so an interrupted move at worst leaves a partial/orphaned copy at the destination with the original still safely in place, never the reverse
 - Removing `autocat.prx` from `vsh.txt` undoes nothing — your games stay in their new folders (which is the point)
 
 ## Note
@@ -76,6 +77,10 @@ If you change the classification rules later and want to re-run on already-sorte
 ### v1.2: fixed real-hardware no-op bug
 
 On real PSP hardware, `module_start` for a `vsh.txt`-loaded plugin runs synchronously on the VSH's own plugin-loader thread. v1.1 did the entire directory scan/classify/rename pass (plus CSO zlib decompression) right there in `module_start`, before returning. That's a lot of blocking `sceIo*` traffic thrown at a boot-critical thread before the memory stick driver is necessarily done settling — on real hardware this either silently did nothing or got cut short, even though the classification logic itself (covered by the host unit tests) was correct. v1.2 spawns a dedicated worker thread from `module_start`, waits a few seconds for the storage to settle, and does the actual sorting there instead, returning from `module_start` immediately.
+
+### Copy+delete instead of rename
+
+Confirmed on real hardware (PRO 6.60/6.61): `sceIoRename` works fine for renaming within the same directory, but fails with error `0x80010011` for every cross-directory move — which is exactly what sorting a game into a `CAT_xx` subfolder is. AutoCat now copies the file (or, for `/PSP/GAME` folders, the whole directory tree) to its new home and only deletes the original once that copy fully succeeds, instead of relying on `sceIoRename`. This is slower — a multi-GB ISO takes real time and needs enough free space to briefly hold both copies — but it's what actually works on this CFW, and it has a nicer safety property besides: a copy that gets interrupted (power loss, a crash) leaves your original file untouched.
 
 ## Building
 

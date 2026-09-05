@@ -191,6 +191,109 @@ static void write_report_line(SceUID unused_rfd, const char *line)
     sceIoClose(fd);
 }
 
+/* ── copy+delete move (sceIoRename doesn't support cross-directory
+ * moves on this CFW's FAT driver — confirmed on real hardware: same-
+ * directory rename succeeds, cross-directory rename always fails
+ * with 0x80010011/FILE_ALREADY_EXISTS regardless of whether the
+ * destination actually exists) ─────────────────────────────────── */
+
+#define COPY_CHUNK 65536
+
+/* Copy a single file byte-for-byte. Returns 0 on success. Leaves a
+ * partial destination file on failure — caller doesn't delete the
+ * source unless this succeeds, so nothing is lost either way. */
+static int copy_file(const char *src_path, const char *dst_path)
+{
+    SceUID sfd, dfd;
+    static unsigned char buf[COPY_CHUNK];
+    int n;
+    int ok = 1;
+
+    sfd = sceIoOpen(src_path, PSP_O_RDONLY, 0);
+    if (sfd < 0) return -1;
+
+    dfd = sceIoOpen(dst_path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+    if (dfd < 0) {
+        sceIoClose(sfd);
+        return -1;
+    }
+
+    for (;;) {
+        n = sceIoRead(sfd, buf, sizeof(buf));
+        if (n < 0) { ok = 0; break; }
+        if (n == 0) break;
+        if (sceIoWrite(dfd, buf, n) != n) { ok = 0; break; }
+    }
+
+    sceIoClose(sfd);
+    sceIoClose(dfd);
+    return ok ? 0 : -1;
+}
+
+/* Recursively copy a directory tree, then remove the source tree.
+ * Returns 0 on success. On failure, whatever was already copied is
+ * left in place (not cleaned up) and the source is not touched. */
+static int move_dir_tree(const char *src_dir, const char *dst_dir)
+{
+    SceUID dfd;
+    SceIoDirent dir;
+
+    if (sceIoMkdir(dst_dir, 0777) < 0 && sceIoGetstat(dst_dir, NULL) < 0)
+        return -1; /* couldn't create and it doesn't already exist */
+
+    dfd = sceIoDopen(src_dir);
+    if (dfd < 0) return -1;
+
+    while (sceIoDread(dfd, &dir) > 0) {
+        const char *name = dir.d_name;
+        char src_path[192], dst_path[192];
+
+        if (name[0] == '.') continue;
+        snprintf(src_path, sizeof(src_path), "%s/%s", src_dir, name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_dir, name);
+
+        if (entry_is_dir(&dir.d_stat)) {
+            if (move_dir_tree(src_path, dst_path) != 0) {
+                sceIoDclose(dfd);
+                return -1;
+            }
+        } else {
+            if (copy_file(src_path, dst_path) != 0) {
+                sceIoDclose(dfd);
+                return -1;
+            }
+        }
+    }
+    sceIoDclose(dfd);
+
+    /* Everything is copied. Remove what's left in src_dir: any
+     * subdirectory already removed itself (recursively) when its own
+     * move_dir_tree call above finished, so only plain files remain
+     * to clean up here before rmdir'ing this directory itself. */
+    dfd = sceIoDopen(src_dir);
+    if (dfd >= 0) {
+        while (sceIoDread(dfd, &dir) > 0) {
+            const char *name = dir.d_name;
+            char path[192];
+            if (name[0] == '.') continue;
+            if (entry_is_dir(&dir.d_stat)) continue; /* already gone */
+            snprintf(path, sizeof(path), "%s/%s", src_dir, name);
+            sceIoRemove(path);
+        }
+        sceIoDclose(dfd);
+    }
+    sceIoRmdir(src_dir);
+    return 0;
+}
+
+/* Move a single file (ISO/CSO) via copy+delete. Returns 0 on success. */
+static int move_file(const char *src_path, const char *dst_path)
+{
+    if (copy_file(src_path, dst_path) != 0) return -1;
+    sceIoRemove(src_path);
+    return 0;
+}
+
 static int organize_eboots(const char *root, SceUID rfd,
                            const char *self_folder_name)
 {
@@ -311,13 +414,17 @@ static int organize_eboots(const char *root, SceUID rfd,
         }
         if (suffix > 99) continue;
 
-        snprintf(report, sizeof(report), "    calling sceIoRename(%s -> %s)...\n",
+        snprintf(report, sizeof(report), "    copying dir %s -> %s...\n",
                  old_path, new_path);
         write_report_line(rfd, report);
 
         {
-        int rc = sceIoRename(old_path, new_path);
-        snprintf(report, sizeof(report), "    sceIoRename returned 0x%08x\n", (unsigned int)rc);
+        /* sceIoRename doesn't support cross-directory moves on this
+         * CFW (confirmed on real hardware: same-dir rename works,
+         * cross-dir always fails with 0x80010011) — copy+delete
+         * instead of rename. */
+        int rc = move_dir_tree(old_path, new_path);
+        snprintf(report, sizeof(report), "    move_dir_tree returned %d\n", rc);
         write_report_line(rfd, report);
         if (rc >= 0) {
             moved++;
@@ -326,7 +433,7 @@ static int organize_eboots(const char *root, SceUID rfd,
                      name, folder, category, disc_id, title);
         } else {
             snprintf(report, sizeof(report),
-                     "FAIL %s (rename error, in use?)\n", name);
+                     "FAIL %s (copy/move error)\n", name);
         }
         write_report_line(rfd, report);
         }
@@ -482,13 +589,16 @@ static int organize_iso(const char *root, SceUID rfd)
         }
         if (suffix > 99) continue;
 
-        snprintf(report, sizeof(report), "    calling sceIoRename(%s -> %s)...\n",
+        snprintf(report, sizeof(report), "    copying %s -> %s...\n",
                  old_path, new_path);
         write_report_line(rfd, report);
 
         {
-        int rc = sceIoRename(old_path, new_path);
-        snprintf(report, sizeof(report), "    sceIoRename returned 0x%08x\n", (unsigned int)rc);
+        /* copy+delete, not rename — see move_dir_tree's comment above
+         * for why: sceIoRename doesn't support cross-directory moves
+         * on this CFW. */
+        int rc = move_file(old_path, new_path);
+        snprintf(report, sizeof(report), "    move_file returned %d\n", rc);
         write_report_line(rfd, report);
         if (rc >= 0) {
             moved++;
@@ -496,7 +606,7 @@ static int organize_iso(const char *root, SceUID rfd)
                      "MOVE %s -> %s/  [UMD id=%s]\n", name, folder, disc_id);
         } else {
             snprintf(report, sizeof(report),
-                     "FAIL %s (rename error, in use?)\n", name);
+                     "FAIL %s (copy/move error)\n", name);
         }
         write_report_line(rfd, report);
         }
@@ -514,7 +624,8 @@ static int organize_iso(const char *root, SceUID rfd)
 
 /* Move root/name -> root/CAT_00_Favorites/name (collision -> _2, _3...).
  * Shared by both the eboot-dir and iso-file promotion paths. */
-static int move_into_favorites(const char *root, const char *name, SceUID rfd)
+static int move_into_favorites(const char *root, const char *name, SceUID rfd,
+                               int is_dir)
 {
     char fav_dir[140], old_path[140], new_path[140], report[256];
     int suffix = 0;
@@ -547,7 +658,10 @@ static int move_into_favorites(const char *root, const char *name, SceUID rfd)
         if (suffix > 99) return 0;
     }
 
-    if (sceIoRename(old_path, new_path) >= 0) {
+    /* copy+delete, not rename — sceIoRename doesn't support
+     * cross-directory moves on this CFW (see move_dir_tree's comment). */
+    if ((is_dir ? move_dir_tree(old_path, new_path)
+                : move_file(old_path, new_path)) == 0) {
         snprintf(report, sizeof(report), "FAVORITE %s -> CAT_00_Favorites/\n", name);
         write_report_line(rfd, report);
         return 1;
@@ -601,7 +715,7 @@ static int promote_favorites(const char *root, SceUID rfd)
 
             if (entry_is_dir(&dir.d_stat)) {
                 if (dir_has_favorite_marker(cat_path, name)) {
-                    promoted += move_into_favorites(cat_path, name, rfd);
+                    promoted += move_into_favorites(cat_path, name, rfd, 1);
                     continue;
                 }
                 /* not an eboot dir itself? must be a CAT_<Genre> subfolder
@@ -619,14 +733,14 @@ static int promote_favorites(const char *root, SceUID rfd)
                         if (gname[0] == '.') continue;
                         if (!entry_is_dir(&gdir.d_stat)) continue;
                         if (!dir_has_favorite_marker(genre_path, gname)) continue;
-                        promoted += move_into_favorites(genre_path, gname, rfd);
+                        promoted += move_into_favorites(genre_path, gname, rfd, 1);
                     }
                     sceIoDclose(gdfd);
                 }
                 continue;
             }
             if (!has_favorite_sidecar(cat_path, name)) continue;
-            promoted += move_into_favorites(cat_path, name, rfd);
+            promoted += move_into_favorites(cat_path, name, rfd, 0);
         }
         sceIoDclose(dfd);
     }
