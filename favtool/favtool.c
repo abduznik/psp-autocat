@@ -50,6 +50,22 @@ static char dbg_sample_name[96] = "";  /* first raw entry name seen, for sanity 
 static unsigned int dbg_sample_attr = 0;
 static unsigned int dbg_sample_mode = 0;
 
+/* Control test: does reading ms0: root (known non-empty — PSP/, ISO/,
+ * SEPLUGINS/ etc definitely exist there) work at all? If this is also
+ * 0, the bug is in sceIoDread generally, not specific to /PSP/GAME. */
+static int dbg_root_dopen_ok = 0;
+static int dbg_root_entries = 0;
+
+static void debug_root_scan(void)
+{
+    SceUID dfd = sceIoDopen("ms0:");
+    SceIoDirent dir;
+    dbg_root_dopen_ok = (dfd >= 0);
+    if (dfd < 0) return;
+    while (sceIoDread(dfd, &dir) > 0) dbg_root_entries++;
+    sceIoDclose(dfd);
+}
+
 /* FIO_S_ISDIR(st_mode) is the textbook PSPSDK check, but on real
  * hardware's FAT driver st_mode isn't reliably populated the same way
  * emulators/host testing led us to expect — the official PSPSDK kernel
@@ -322,6 +338,7 @@ int main(void)
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
+    debug_root_scan();
     scan_all();
     memset(&last_pad, 0, sizeof(last_pad));
 
@@ -351,7 +368,10 @@ int main(void)
 
         if (entry_count == 0) {
             printf("\nNo games found under /PSP/GAME or /ISO.\n");
-            printf("\n-- debug --\n");
+            printf("\n-- debug: ms0: root (control test) --\n");
+            printf("ms0: dopen: %s   ms0: raw entries: %d\n",
+                   dbg_root_dopen_ok ? "OK" : "FAILED", dbg_root_entries);
+            printf("\n-- debug: /PSP/GAME --\n");
             printf("ms0:/PSP/GAME dopen: %s\n", dbg_dopen_ok ? "OK" : "FAILED");
             printf("raw dread entries:   %d\n", dbg_raw_entries);
             printf("entries seen as dir: %d\n", dbg_dirs_seen);
