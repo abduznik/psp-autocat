@@ -31,8 +31,11 @@
 
 #define REPORT_PATH "ms0:/seplugins/autocat_report.txt"
 
-/* candidate device roots: ms0: first, then ef0: (PSP Go) */
-static const char *game_roots[2] = { "ms0:", "ef0:" };
+/* ms0: only for now — ef0: (PSP Go internal storage) is untested on
+ * real hardware and scanning a device that isn't present has caused
+ * a hard freeze in this codebase before (see favtool's original
+ * unguarded ef0: scan). Re-add once someone can verify on a real Go. */
+static const char *game_roots[1] = { "ms0:" };
 
 /* FIO_S_ISDIR(st_mode) is the textbook PSPSDK check, but on real
  * hardware's FAT driver st_mode isn't reliably populated the same way
@@ -517,11 +520,10 @@ int autocat_run_all(void)
     SceUID rfd;
     char report[256];
 
-    /* pick ms0: or ef0: (PSP Go) */
     rfd = sceIoOpen(REPORT_PATH,
                     PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
 
-    for (root_idx = 0; root_idx < 2; root_idx++) {
+    for (root_idx = 0; root_idx < 1; root_idx++) {
         const char *base = game_roots[root_idx];
         char game_root[128], iso_root[128];
 

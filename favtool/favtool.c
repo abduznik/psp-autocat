@@ -52,7 +52,8 @@ static int entry_is_dir(const SceIoStat *st)
     return 0;
 }
 
-static const char *game_roots[2] = { "ms0:", "ef0:" };
+/* ms0: only — see autocat.c for why ef0: is left out for now. */
+static const char *game_roots[1] = { "ms0:" };
 
 static int exit_request = 0;
 
@@ -277,7 +278,7 @@ static void scan_all(void)
 {
     int i;
     entry_count = 0;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 1; i++) {
         char game_root[128], iso_root[128];
         snprintf(game_root, sizeof(game_root), "%s/PSP/GAME", game_roots[i]);
         snprintf(iso_root, sizeof(iso_root), "%s/ISO", game_roots[i]);
