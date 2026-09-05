@@ -39,6 +39,17 @@ typedef struct {
 static entry_t entries[MAX_ENTRIES];
 static int entry_count = 0;
 
+/* Diagnostic counters shown on screen when the list comes up empty,
+ * so we can see exactly where the scan is dropping entries instead
+ * of guessing blind against real hardware. */
+static int dbg_dopen_ok = 0;      /* did sceIoDopen(ms0:/PSP/GAME) succeed? */
+static int dbg_raw_entries = 0;   /* total sceIoDread() hits, any type */
+static int dbg_dirs_seen = 0;     /* entries where entry_is_dir() was true */
+static int dbg_eboot_found = 0;   /* dirs where EBOOT.PBP was found */
+static char dbg_sample_name[96] = "";  /* first raw entry name seen, for sanity */
+static unsigned int dbg_sample_attr = 0;
+static unsigned int dbg_sample_mode = 0;
+
 /* FIO_S_ISDIR(st_mode) is the textbook PSPSDK check, but on real
  * hardware's FAT driver st_mode isn't reliably populated the same way
  * emulators/host testing led us to expect — the official PSPSDK kernel
@@ -198,6 +209,8 @@ static void scan_eboot_root(const char *root)
 {
     SceUID dfd = sceIoDopen(root);
     SceIoDirent dir;
+
+    dbg_dopen_ok = (dfd >= 0);
     if (dfd < 0) return;
 
     while (sceIoDread(dfd, &dir) > 0) {
@@ -206,11 +219,20 @@ static void scan_eboot_root(const char *root)
         char eboot_path[256];
         SceIoStat st;
 
+        dbg_raw_entries++;
+        if (dbg_sample_name[0] == '\0' && name[0] != '.') {
+            snprintf(dbg_sample_name, sizeof(dbg_sample_name), "%s", name);
+            dbg_sample_attr = dir.d_stat.st_attr;
+            dbg_sample_mode = dir.d_stat.st_mode;
+        }
+
         if (name[0] == '.') continue;
         if (!entry_is_dir(&dir.d_stat)) continue;
+        dbg_dirs_seen++;
 
         snprintf(eboot_path, sizeof(eboot_path), "%s/%s/EBOOT.PBP", root, name);
         if (sceIoGetstat(eboot_path, &st) >= 0) {
+            dbg_eboot_found++;
             add_entry(root, name, 1);
             continue;
         }
@@ -329,6 +351,13 @@ int main(void)
 
         if (entry_count == 0) {
             printf("\nNo games found under /PSP/GAME or /ISO.\n");
+            printf("\n-- debug --\n");
+            printf("ms0:/PSP/GAME dopen: %s\n", dbg_dopen_ok ? "OK" : "FAILED");
+            printf("raw dread entries:   %d\n", dbg_raw_entries);
+            printf("entries seen as dir: %d\n", dbg_dirs_seen);
+            printf("dirs with EBOOT.PBP: %d\n", dbg_eboot_found);
+            printf("first entry: \"%s\" attr=0x%08x mode=0x%08x\n",
+                   dbg_sample_name, dbg_sample_attr, dbg_sample_mode);
         }
 
         for (i = 0; i < VISIBLE_ROWS && (top + i) < entry_count; i++) {
