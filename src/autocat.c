@@ -315,7 +315,11 @@ static int organize_eboots(const char *root, SceUID rfd,
                  old_path, new_path);
         write_report_line(rfd, report);
 
-        if (sceIoRename(old_path, new_path) >= 0) {
+        {
+        int rc = sceIoRename(old_path, new_path);
+        snprintf(report, sizeof(report), "    sceIoRename returned 0x%08x\n", (unsigned int)rc);
+        write_report_line(rfd, report);
+        if (rc >= 0) {
             moved++;
             snprintf(report, sizeof(report),
                      "MOVE %s -> %s/  [%s|%s] \"%s\"\n",
@@ -325,6 +329,7 @@ static int organize_eboots(const char *root, SceUID rfd,
                      "FAIL %s (rename error, in use?)\n", name);
         }
         write_report_line(rfd, report);
+        }
     }
     write_report_line(rfd, "  (loop finished, no more dread entries)\n");
     sceIoDclose(dfd);
@@ -481,7 +486,11 @@ static int organize_iso(const char *root, SceUID rfd)
                  old_path, new_path);
         write_report_line(rfd, report);
 
-        if (sceIoRename(old_path, new_path) >= 0) {
+        {
+        int rc = sceIoRename(old_path, new_path);
+        snprintf(report, sizeof(report), "    sceIoRename returned 0x%08x\n", (unsigned int)rc);
+        write_report_line(rfd, report);
+        if (rc >= 0) {
             moved++;
             snprintf(report, sizeof(report),
                      "MOVE %s -> %s/  [UMD id=%s]\n", name, folder, disc_id);
@@ -490,6 +499,7 @@ static int organize_iso(const char *root, SceUID rfd)
                      "FAIL %s (rename error, in use?)\n", name);
         }
         write_report_line(rfd, report);
+        }
     }
     write_report_line(rfd, "  (iso loop finished, no more dread entries)\n");
     sceIoDclose(dfd);
