@@ -376,6 +376,70 @@ int main(void)
         }
         if (pressed & PSP_CTRL_START) break;
         if (pressed & PSP_CTRL_SELECT) scan_all();
+        if (pressed & PSP_CTRL_SQUARE) {
+            /* Diagnostic: is sceIoRename broken in general on this
+             * CFW, or specifically for cross-directory moves? Create
+             * a small test file, rename it within the same directory,
+             * then try a cross-directory rename into a test subfolder.
+             * Neither touches any real game. */
+            char report[256];
+            SceUID fd;
+            int rc_same_dir, rc_cross_dir;
+
+            pspDebugScreenSetXY(0, 0);
+            printf("Running sceIoRename diagnostic (safe, uses test files only)...\n");
+            sceDisplayWaitVblankStart();
+
+            sceIoRemove("ms0:/seplugins/autocat_rename_test.tmp");
+            sceIoRemove("ms0:/seplugins/autocat_rename_test2.tmp");
+            sceIoRemove("ms0:/seplugins/autocat_rename_testdir/autocat_rename_test2.tmp");
+            sceIoRmdir("ms0:/seplugins/autocat_rename_testdir");
+
+            fd = sceIoOpen("ms0:/seplugins/autocat_rename_test.tmp",
+                           PSP_O_WRONLY | PSP_O_CREAT, 0777);
+            if (fd >= 0) sceIoClose(fd);
+
+            rc_same_dir = sceIoRename("ms0:/seplugins/autocat_rename_test.tmp",
+                                      "ms0:/seplugins/autocat_rename_test2.tmp");
+
+            sceIoMkdir("ms0:/seplugins/autocat_rename_testdir", 0777);
+            rc_cross_dir = sceIoRename("ms0:/seplugins/autocat_rename_test2.tmp",
+                                       "ms0:/seplugins/autocat_rename_testdir/autocat_rename_test2.tmp");
+
+            snprintf(report, sizeof(report),
+                     "\nRENAME-TEST same_dir=0x%08x cross_dir=0x%08x\n",
+                     (unsigned int)rc_same_dir, (unsigned int)rc_cross_dir);
+            {
+                SceUID rfd = sceIoOpen("ms0:/seplugins/autocat_report.txt",
+                                       PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+                if (rfd >= 0) {
+                    sceIoWrite(rfd, report, strlen(report));
+                    sceIoClose(rfd);
+                }
+            }
+
+            /* clean up test artifacts either way */
+            sceIoRemove("ms0:/seplugins/autocat_rename_test.tmp");
+            sceIoRemove("ms0:/seplugins/autocat_rename_test2.tmp");
+            sceIoRemove("ms0:/seplugins/autocat_rename_testdir/autocat_rename_test2.tmp");
+            sceIoRmdir("ms0:/seplugins/autocat_rename_testdir");
+
+            pspDebugScreenSetXY(0, 0);
+            printf("Diagnostic done.\n");
+            printf("same_dir rename:  0x%08x  (%s)\n", (unsigned int)rc_same_dir,
+                   rc_same_dir >= 0 ? "OK" : "FAILED");
+            printf("cross_dir rename: 0x%08x  (%s)\n", (unsigned int)rc_cross_dir,
+                   rc_cross_dir >= 0 ? "OK" : "FAILED");
+            printf("\nAlso appended to ms0:/seplugins/autocat_report.txt\n");
+            printf("Press X to continue.\n");
+            sceDisplayWaitVblankStart();
+            for (;;) {
+                sceCtrlReadBufferPositive(&pad, 1);
+                if (pad.Buttons & PSP_CTRL_CROSS) break;
+                sceKernelDelayThread(16 * 1000);
+            }
+            memset(&last_pad, 0, sizeof(last_pad));
+        }
         if (pressed & PSP_CTRL_TRIANGLE) {
             pspDebugScreenSetXY(0, 0);
             printf("Sorting... this runs the same classify/move logic as\n");
@@ -413,7 +477,7 @@ int main(void)
 
         pspDebugScreenSetXY(0, 0);
         printf("AutoCat Favorites  (%d games)\n", entry_count);
-        printf("UP/DOWN move, X favorite, TRIANGLE sort now, SELECT rescan, START exit\n");
+        printf("UP/DOWN move, X favorite, TRIANGLE sort, SQUARE rename test, SELECT rescan, START exit\n");
         printf("-----------------------------------------------------------------------\n");
 
         if (entry_count == 0) {
