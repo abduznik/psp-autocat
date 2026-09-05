@@ -175,11 +175,20 @@ static int iso_sector_read(void *ctx, unsigned int sector,
 
 /* ── organizer: /PSP/GAME eboots ─────────────────────────── */
 
-static void write_report_line(SceUID rfd, const char *line)
+/* Opens, writes, and closes the report file on every single call
+ * instead of writing through one long-lived fd. Slower, but every
+ * line is guaranteed to actually hit the filesystem before whatever
+ * comes next runs — critical for debugging a hang/crash, where a
+ * buffered-but-unflushed line would otherwise vanish along with
+ * whatever caused the crash, leaving no trace of how far it got. */
+static void write_report_line(SceUID unused_rfd, const char *line)
 {
-    if (rfd >= 0) {
-        sceIoWrite(rfd, line, strlen(line));
-    }
+    SceUID fd;
+    (void)unused_rfd;
+    fd = sceIoOpen(REPORT_PATH, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+    if (fd < 0) return;
+    sceIoWrite(fd, line, strlen(line));
+    sceIoClose(fd);
 }
 
 static int organize_eboots(const char *root, SceUID rfd,
@@ -210,23 +219,45 @@ static int organize_eboots(const char *root, SceUID rfd,
         char old_path[140], new_path[140];
         int suffix = 0;
 
+        /* one line the moment we see this entry, before touching it at
+         * all — if something hangs/crashes downstream, this is the
+         * last line in the report and tells us exactly which entry it
+         * was on. Deliberately unconditional, before every skip check. */
+        snprintf(report, sizeof(report), "  ENTRY[%d] \"%s\"\n", raw_entries, name);
+        write_report_line(rfd, report);
+
         /* never touch the folder we're currently running from — renaming
          * a homebrew's own backing directory out from under its running
          * executable is what caused a real crash/shutdown on hardware */
-        if (self_folder_name && strcmp(name, self_folder_name) == 0) continue;
+        if (self_folder_name && strcmp(name, self_folder_name) == 0) {
+            write_report_line(rfd, "    -> skip (self)\n");
+            continue;
+        }
 
         /* skip junk and already-organized entries (Favorites folder
          * excepted below via is_locked_category, but that's walked in
          * the promote_favorites() pass, not here) */
         if (name[0] == '.') continue;
-        if (!entry_is_dir(&dir.d_stat)) continue;
-        if (is_categorized(name)) continue;
-        if (!dir_has_eboot(root, name)) continue;
+        if (!entry_is_dir(&dir.d_stat)) {
+            write_report_line(rfd, "    -> skip (not a dir)\n");
+            continue;
+        }
+        if (is_categorized(name)) {
+            write_report_line(rfd, "    -> skip (already categorized)\n");
+            continue;
+        }
+        if (!dir_has_eboot(root, name)) {
+            write_report_line(rfd, "    -> skip (no EBOOT.PBP)\n");
+            continue;
+        }
+        write_report_line(rfd, "    has EBOOT.PBP\n");
 
         if (dir_has_favorite_marker(root, name)) {
             kind = AC_FAVORITE;
             snprintf(folder, sizeof(folder), "%s", ac_kind_folder(kind));
+            write_report_line(rfd, "    favorite marker found\n");
         } else {
+        write_report_line(rfd, "    reading PARAM.SFO...\n");
         /* parse PARAM.SFO */
         sfo_size = read_eboot_sfo(root, name, sfo, sizeof(sfo));
         if (sfo_size <= 0) {
@@ -234,6 +265,8 @@ static int organize_eboots(const char *root, SceUID rfd,
             write_report_line(rfd, report);
             continue;
         }
+        snprintf(report, sizeof(report), "    SFO read ok, %d bytes; parsing...\n", sfo_size);
+        write_report_line(rfd, report);
         count = sfo_parse(sfo, (unsigned int)sfo_size, entries, 32);
 
         /* extract keys we care about */
@@ -246,15 +279,21 @@ static int organize_eboots(const char *root, SceUID rfd,
                 title = sfo_get_str(sfo, &entries[i]);
         }
 
+        write_report_line(rfd, "    classifying...\n");
         kind = classify_game(category, disc_id, title);
         build_kind_folder(kind, title, folder, sizeof(folder));
         }
+
+        snprintf(report, sizeof(report), "    -> folder=\"%s\", making dirs...\n", folder);
+        write_report_line(rfd, report);
 
         /* build category dir if missing (and its genre subdir, if any) */
         snprintf(old_path, sizeof(old_path), "%s/%s", root, ac_kind_folder(kind));
         sceIoMkdir(old_path, 0777);
         snprintf(old_path, sizeof(old_path), "%s/%s", root, folder);
         sceIoMkdir(old_path, 0777);
+
+        write_report_line(rfd, "    dirs ready, renaming...\n");
 
         /* rename: root/name -> root/folder/name  (collision -> _2, _3..) */
         snprintf(old_path, sizeof(old_path), "%s/%s", root, name);
@@ -272,6 +311,10 @@ static int organize_eboots(const char *root, SceUID rfd,
         }
         if (suffix > 99) continue;
 
+        snprintf(report, sizeof(report), "    calling sceIoRename(%s -> %s)...\n",
+                 old_path, new_path);
+        write_report_line(rfd, report);
+
         if (sceIoRename(old_path, new_path) >= 0) {
             moved++;
             snprintf(report, sizeof(report),
@@ -283,6 +326,7 @@ static int organize_eboots(const char *root, SceUID rfd,
         }
         write_report_line(rfd, report);
     }
+    write_report_line(rfd, "  (loop finished, no more dread entries)\n");
     sceIoDclose(dfd);
     snprintf(report, sizeof(report),
              "DEBUG organize_eboots(%s) raw_entries=%d moved=%d\n",
@@ -469,15 +513,27 @@ static int promote_favorites(const char *root, SceUID rfd)
     SceUID cat_dfd;
     SceIoDirent cat_dir;
     int promoted = 0;
+    char report[256];
+    int i = 0;
+
+    snprintf(report, sizeof(report), "DEBUG promote_favorites(%s) start\n", root);
+    write_report_line(rfd, report);
 
     cat_dfd = sceIoDopen(root);
-    if (cat_dfd < 0) return 0;
+    if (cat_dfd < 0) {
+        write_report_line(rfd, "DEBUG promote_favorites dopen FAILED\n");
+        return 0;
+    }
 
     while (sceIoDread(cat_dfd, &cat_dir) > 0) {
         const char *cat_name = cat_dir.d_name;
         SceUID dfd;
         SceIoDirent dir;
         char cat_path[140];
+
+        i++;
+        snprintf(report, sizeof(report), "  PROMOTE-ENTRY[%d] \"%s\"\n", i, cat_name);
+        write_report_line(rfd, report);
 
         if (cat_name[0] == '.') continue;
         if (!entry_is_dir(&cat_dir.d_stat)) continue;
@@ -524,6 +580,9 @@ static int promote_favorites(const char *root, SceUID rfd)
         sceIoDclose(dfd);
     }
     sceIoDclose(cat_dfd);
+    snprintf(report, sizeof(report), "DEBUG promote_favorites(%s) done, promoted=%d\n",
+             root, promoted);
+    write_report_line(rfd, report);
     return promoted;
 }
 
