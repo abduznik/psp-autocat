@@ -17,12 +17,15 @@
 
 #include "autocat.h"
 
-/* vsh.txt plugins run in the VSH's kernel partition; a PSP_MODULE_USER
- * module loaded there can end up unable to reliably create/schedule its
- * own threads or touch ms0: this early in boot. PSP_MODULE_KERNEL is
- * the flag actually used by known-working vsh.txt plugins that do this
- * kind of filesystem work (GCLite included). */
-PSP_MODULE_INFO("AutoCat", PSP_MODULE_KERNEL, 1, 0);
+/* PSP_MODULE_KERNEL was tried to match GCLite's known-working
+ * approach, but on real hardware it produced a kernel-level crash
+ * ("blue screen") instead of just failing safely — a bug in kernel
+ * mode can take down the whole OS instead of being contained to one
+ * process. Back to PSP_MODULE_USER: a crash here can only kill this
+ * module, never the console. Slower to debug (silent failure instead
+ * of a crash with a stack trace), but nothing here is worth risking
+ * the user's hardware over. */
+PSP_MODULE_INFO("AutoCat", PSP_MODULE_USER, 1, 0);
 PSP_MAIN_THREAD_ATTR(0);
 PSP_NO_CREATE_MAIN_THREAD();
 
