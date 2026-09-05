@@ -625,14 +625,25 @@ static void extract_parent_folder_name(const char *path, char *out, int outsize)
 int autocat_run_all(const char *self_path)
 {
     int root_idx;
-    SceUID rfd;
+    /* write_report_line() opens/writes/closes the report file on
+     * every call now (for crash durability) and ignores this
+     * parameter entirely. This used to hold one long-lived fd open
+     * across the whole run via a separate sceIoOpen here — which,
+     * combined with write_report_line's own independent opens to the
+     * same file, meant two overlapping write handles on one file:
+     * the final sceIoClose(rfd) at the end of this function was very
+     * plausibly truncating the file back to 0 bytes, silently
+     * discarding every line write_report_line had made in between.
+     * That exactly matched a real-hardware report: real filesystem
+     * changes happened (a CAT_ folder got created) but the report
+     * came back empty. rfd is kept only so the many existing
+     * write_report_line(rfd, ...) call sites don't all need editing;
+     * it is never opened or closed. */
+    SceUID rfd = -1;
     char report[256];
     char self_folder_name[128];
 
     extract_parent_folder_name(self_path, self_folder_name, sizeof(self_folder_name));
-
-    rfd = sceIoOpen(REPORT_PATH,
-                    PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
 
     for (root_idx = 0; root_idx < 1; root_idx++) {
         const char *base = game_roots[root_idx];
@@ -661,6 +672,5 @@ int autocat_run_all(const char *self_path)
         organize_iso(iso_root, rfd);
     }
 
-    if (rfd >= 0) sceIoClose(rfd);
     return 0;
 }
