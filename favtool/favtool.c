@@ -22,6 +22,7 @@
  */
 
 #include <pspkernel.h>
+#include <pspinit.h>
 #include <pspdebug.h>
 #include <pspctrl.h>
 #include <pspiofilemgr.h>
