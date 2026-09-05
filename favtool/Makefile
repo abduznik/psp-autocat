@@ -1,13 +1,14 @@
 TARGET   := favtool
-OBJS     := favtool.o
+OBJS     := favtool.o autocat.o sfo.o classify.o genre.o isocd.o cso.o
 
-INCDIR  :=
+VPATH   := ../src
+INCDIR  := ../src
 CFLAGS  := -O2 -G0 -Wall
 CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS := $(CFLAGS)
 
 LIBDIR :=
-LIBS   := -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspge
+LIBS   := -lpspdebug -lpspdisplay -lpspge -lpspctrl -lz
 
 BUILD_PRX = 0
 

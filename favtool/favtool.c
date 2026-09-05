@@ -1,10 +1,20 @@
 /*
- * favtool — AutoCat Favorites picker
+ * favtool — AutoCat Favorites & Sorter
  *
  * A tiny homebrew EBOOT (launched from the XMB like any game) that
- * lists every game AutoCat knows about and lets you toggle the same
- * FAVORITE / *.favorite marker files that autocat.prx reads. No PC,
- * no file manager plugin needed — just run this from the XMB.
+ * lists every game AutoCat knows about, lets you toggle FAVORITE /
+ * *.favorite marker files, and can run the actual categorization
+ * pass (autocat_run_all) on demand via TRIANGLE.
+ *
+ * Deliberately NOT a vsh.txt plugin: a vsh.txt plugin runs inside
+ * the VSH process itself, sharing its threads/memory with no
+ * isolation — a bug there can take down the whole boot chain (we
+ * hit this for real: freezes, a USB corruption error, and a
+ * kernel-level crash across several attempts at making autocat.prx
+ * work as a boot-time plugin). A normal homebrew EBOOT is its own
+ * process — if this crashes, you're kicked back to the XMB, nothing
+ * else is affected. Slower (you have to launch it, it's not
+ * automatic at boot) but categorically safer.
  *
  * Uses pspDebugScreen text output (no GU init) — simple and robust.
  *
@@ -18,6 +28,8 @@
 #include <pspdisplay.h>
 #include <string.h>
 #include <stdio.h>
+
+#include "autocat.h"
 
 PSP_MODULE_INFO("AutoCatFavorites", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -357,14 +369,35 @@ int main(void)
         }
         if (pressed & PSP_CTRL_START) break;
         if (pressed & PSP_CTRL_SELECT) scan_all();
+        if (pressed & PSP_CTRL_TRIANGLE) {
+            pspDebugScreenSetXY(0, 0);
+            printf("Sorting... this runs the same classify/move logic as\n");
+            printf("autocat.prx, just from a normal game process instead\n");
+            printf("of a boot-time plugin. Please wait.\n");
+            sceDisplayWaitVblankStart();
+            autocat_run_all();
+            scan_all();
+            cursor = 0;
+            top = 0;
+            pspDebugScreenSetXY(0, 0);
+            printf("Sort complete. See ms0:/seplugins/autocat_report.txt\n");
+            printf("for a full move-by-move log. Press X to continue.\n\n");
+            sceDisplayWaitVblankStart();
+            for (;;) {
+                sceCtrlReadBufferPositive(&pad, 1);
+                if (pad.Buttons & PSP_CTRL_CROSS) break;
+                sceKernelDelayThread(16 * 1000);
+            }
+            memset(&last_pad, 0, sizeof(last_pad));
+        }
 
         if (cursor < top) top = cursor;
         if (cursor >= top + VISIBLE_ROWS) top = cursor - VISIBLE_ROWS + 1;
 
         pspDebugScreenSetXY(0, 0);
         printf("AutoCat Favorites  (%d games)\n", entry_count);
-        printf("UP/DOWN move, X toggle favorite, SELECT rescan, START exit\n");
-        printf("--------------------------------------------------------\n");
+        printf("UP/DOWN move, X favorite, TRIANGLE sort now, SELECT rescan, START exit\n");
+        printf("-----------------------------------------------------------------------\n");
 
         if (entry_count == 0) {
             printf("\nNo games found under /PSP/GAME or /ISO.\n");

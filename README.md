@@ -1,8 +1,10 @@
 # AutoCat — PSP Automatic Game Categorizer
 
-Inspired by **Game Categories Lite** (Bubbletune / codestation), but automatic: where GCLite required you to *manually* create `CAT_` folders and drag games into them, **AutoCat does it for you** at boot.
+Inspired by **Game Categories Lite** (Bubbletune / codestation), but automatic: where GCLite required you to *manually* create `CAT_` folders and drag games into them, **AutoCat does it for you**.
 
-Scans **`/PSP/GAME`** (EBOOT.PBP games and homebrew) **and `/ISO`** (.iso/.cso UMD rips), reads real metadata, classifies, and physically renames each game into the right category folder. The XMB natively renders subfolders as category folders, so **no vsh patching is needed — works on any CFW** (PRO, ME, ARK...). PRO/ME even merge same-named categories between `/PSP/GAME` and `/ISO` on the XMB.
+Scans **`/PSP/GAME`** (EBOOT.PBP games and homebrew) **and `/ISO`** (.iso/.cso UMD rips), reads real metadata, classifies, and physically renames each game into the right category folder. The XMB natively renders subfolders as category folders — no vsh patching is needed for the categories themselves to show up, and it works on any CFW (PRO, ME, ARK...). PRO/ME even merge same-named categories between `/PSP/GAME` and `/ISO` on the XMB.
+
+**Run it from the "AutoCat Favorites" homebrew (TRIANGLE), not the `autocat.prx` boot-time plugin.** See [Installation](#installation) — the plugin path caused real, repeated crashes on real hardware during development and is not currently recommended.
 
 ## What gets categorized
 
@@ -40,18 +42,24 @@ On the next boot AutoCat pulls the marked game out of wherever it currently live
 
 There's no built-in "recently played" tracking — that would require patching the game-launch path (VSH syscall hooking), which is explicitly outside this project's "no VSH patching" design and carries real crash risk across different CFWs/firmware versions. Favorites is the safe, standalone way to keep a "continue playing" shortlist.
 
-## Installation
+## Installation (recommended: homebrew, not a plugin)
+
+1. Copy the `AutoCat Favorites` folder (containing `EBOOT.PBP`) to `ms0:/PSP/GAME/`
+2. Launch **AutoCat Favorites** from the XMB like any other game
+3. Press **TRIANGLE** to run the sort
+4. It classifies and moves everything, then shows a summary; the full move-by-move log is also appended to `ms0:/seplugins/autocat_report.txt`
+5. Press X, then START to exit back to the XMB — go to Game → Memory Stick and you'll see the `CAT_xx` folders
+
+This is a normal homebrew game process: if anything ever goes wrong, it can only crash itself and drop you back to the XMB. Run it again any time you add new games.
+
+### Boot-time plugin (`autocat.prx`) — not currently recommended
+
+The repo also builds `autocat.prx`, a `vsh.txt` plugin meant to run the same sort automatically at boot. **Do not install this without understanding the risk**: during development, running the categorization logic as a `vsh.txt` plugin caused a freeze, a memory-stick filesystem error requiring a hard power-off, and a kernel-level crash on real PRO 6.60/6.61 hardware, across multiple attempts including a plain `PSP_MODULE_USER` build. The underlying cause was never fully root-caused — a `vsh.txt` plugin runs inside the VSH process itself with no isolation, so a bug there can take down the whole boot chain instead of just crashing one program. If you still want to experiment with it:
 
 1. Copy `autocat.prx` to `ms0:/seplugins/`
-2. Add to `ms0:/seplugins/vsh.txt`:
-
-   ```
-   ms0:/seplugins/autocat.prx 1
-   ```
-
-3. Reboot the PSP (or reload VSH plugins in the recovery menu)
-4. AutoCat runs at boot, sorts everything, and appends a report to `ms0:/seplugins/autocat_report.txt`
-5. Go to Game → Memory Stick — you'll see the `CAT_xx` folders
+2. Add to `ms0:/seplugins/vsh.txt`: `ms0:/seplugins/autocat.prx 1`
+3. Reboot — if the PSP hangs, freezes, or won't boot, hold the power switch to force it off, then either remove the memory stick and delete/rename `autocat.prx` from another device, or boot into Recovery Menu (hold R while powering on) and disable it there
+4. Your game files are never at risk either way — every incident during development left the actual games untouched; only the boot process itself was affected
 
 ## Safety
 
