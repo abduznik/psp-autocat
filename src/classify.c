@@ -89,7 +89,8 @@ enum ac_kind classify_game(const char *category,
          starts_with_ci(disc_id, "UC") ||
          starts_with_ci(disc_id, "NPU") ||
          starts_with_ci(disc_id, "NPE") ||
-         starts_with_ci(disc_id, "NPH"))) {
+         starts_with_ci(disc_id, "NPH") ||
+         starts_with_ci(disc_id, "NPJ"))) {
         return AC_PSP;
     }
 
@@ -102,6 +103,7 @@ enum ac_kind classify_game(const char *category,
 const char *ac_kind_folder(enum ac_kind kind)
 {
     switch (kind) {
+    case AC_FAVORITE:  return "CAT_00_Favorites";
     case AC_PSP:       return "CAT_01_PSP";
     case AC_PS1:       return "CAT_02_PS1";
     case AC_EMULATOR:  return "CAT_03_Emulators";

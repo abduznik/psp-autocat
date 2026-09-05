@@ -6,6 +6,7 @@
 #define CLASSIFY_H
 
 enum ac_kind {
+    AC_FAVORITE = -1,   /* user-marked favorite (overrides classification) */
     AC_PSP = 0,         /* official PSP game */
     AC_PS1 = 1,         /* PSone classic / PS1 eboot */
     AC_EMULATOR = 2,    /* known emulator by title */

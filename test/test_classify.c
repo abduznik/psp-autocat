@@ -37,6 +37,7 @@ int main(void)
     CHECK(classify_game("MG", "UCJS10041", "PSPdisp"), AC_PSP, "cat=MG template -> PSP");
     CHECK(classify_game("",   "NPUG-80611", "Daily Trainer"), AC_PSP, "NPUG id -> PSP");
     CHECK(classify_game("",   "ULJM-05371", "Monster Hunter Portable"), AC_PSP, "ULJM id -> PSP");
+    CHECK(classify_game("",   "NPJH-50333", "Kurohyou"), AC_PSP, "NPJH id -> PSP");
 
     /* Emulator detection by title */
     CHECK(classify_game("MS", "ABCD12345", "gPSP Kai"), AC_EMULATOR, "gPSP title -> Emu");

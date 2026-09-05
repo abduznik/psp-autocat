@@ -35,10 +35,11 @@ jobs:
         run: |
           docker run --rm -v "${{ github.workspace }}:/src" -w "/src" pspdev/pspdev make release
 
-      - name: Verify PRX artifact exists
+      - name: Verify build artifacts exist
         run: |
           test -f autocat.prx || (echo "FAIL: autocat.prx not produced" && exit 1)
-          ls -la autocat.prx
+          test -f favtool/EBOOT.PBP || (echo "FAIL: favtool/EBOOT.PBP not produced" && exit 1)
+          ls -la autocat.prx favtool/EBOOT.PBP
           echo "prx_size=$(stat -c%s autocat.prx)" >> "$GITHUB_OUTPUT"
         id: verify
 
@@ -51,6 +52,7 @@ jobs:
         run: |
           mkdir -p artifacts
           cp autocat.prx artifacts/
+          cp favtool/EBOOT.PBP artifacts/favtool-EBOOT.PBP
           find build -name "*.zip" -exec cp {} artifacts/ \;
           ls -la artifacts/
 

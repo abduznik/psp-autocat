@@ -27,6 +27,7 @@
 #include "classify.h"
 #include "isocd.h"
 #include "cso.h"
+#include "genre.h"
 
 #define REPORT_PATH "ms0:/seplugins/autocat_report.txt"
 
@@ -44,6 +45,32 @@ static int is_categorized(const char *name)
     return 0;
 }
 
+/* the Favorites folder itself is fair game for re-classification (in
+ * case a favorite marker gets removed later), unlike every other
+ * CAT_ folder which is left alone once sorted */
+static int is_locked_category(const char *name)
+{
+    return is_categorized(name) && strcmp(name, "CAT_00_Favorites") != 0;
+}
+
+/* Genre only makes sense for real PSP/PS1 games — an emulator or
+ * homebrew title isn't "a genre", it's a tool. Build "CAT_01_PSP" or,
+ * if the title matches a known game, "CAT_01_PSP/CAT_Action". */
+static void build_kind_folder(enum ac_kind kind, const char *title,
+                              char *out, int outsize)
+{
+    const char *base = ac_kind_folder(kind);
+    const char *genre = NULL;
+
+    if (kind == AC_PSP || kind == AC_PS1)
+        genre = genre_lookup(title);
+
+    if (genre)
+        snprintf(out, outsize, "%s/CAT_%s", base, genre);
+    else
+        snprintf(out, outsize, "%s", base);
+}
+
 static int dir_has_eboot(const char *root, const char *name)
 {
     char path[140];
@@ -51,6 +78,24 @@ static int dir_has_eboot(const char *root, const char *name)
 
     snprintf(path, sizeof(path), "%s/%s/EBOOT.PBP", root, name);
     return sceIoGetstat(path, &st) >= 0;
+}
+
+/* Drop a file named FAVORITE inside a /PSP/GAME/<game>/ folder to pin
+ * it to CAT_00_Favorites regardless of its real classification. */
+static int dir_has_favorite_marker(const char *root, const char *name)
+{
+    char path[140];
+    snprintf(path, sizeof(path), "%s/%s/FAVORITE", root, name);
+    return sceIoGetstat(path, NULL) >= 0;
+}
+
+/* For /ISO rips (single files, nothing to drop a marker "inside"),
+ * use a sidecar: Game.iso -> Game.iso.favorite next to it. */
+static int has_favorite_sidecar(const char *root, const char *name)
+{
+    char path[160];
+    snprintf(path, sizeof(path), "%s/%s.favorite", root, name);
+    return sceIoGetstat(path, NULL) >= 0;
 }
 
 static int has_suffix(const char *name, const char *suffix)
@@ -139,16 +184,22 @@ static int organize_eboots(const char *root, SceUID rfd)
         int sfo_size, count, i;
         const char *category = "", *disc_id = "", *title = "";
         enum ac_kind kind;
-        const char *folder;
+        char folder[64];
         char old_path[140], new_path[140];
         int suffix = 0;
 
-        /* skip junk and already-organized entries */
+        /* skip junk and already-organized entries (Favorites folder
+         * excepted below via is_locked_category, but that's walked in
+         * the promote_favorites() pass, not here) */
         if (name[0] == '.') continue;
         if (!FIO_S_ISDIR(dir.d_stat.st_mode)) continue;
         if (is_categorized(name)) continue;
         if (!dir_has_eboot(root, name)) continue;
 
+        if (dir_has_favorite_marker(root, name)) {
+            kind = AC_FAVORITE;
+            snprintf(folder, sizeof(folder), "%s", ac_kind_folder(kind));
+        } else {
         /* parse PARAM.SFO */
         sfo_size = read_eboot_sfo(root, name, sfo, sizeof(sfo));
         if (sfo_size <= 0) {
@@ -169,9 +220,12 @@ static int organize_eboots(const char *root, SceUID rfd)
         }
 
         kind = classify_game(category, disc_id, title);
-        folder = ac_kind_folder(kind);
+        build_kind_folder(kind, title, folder, sizeof(folder));
+        }
 
-        /* build category dir if missing */
+        /* build category dir if missing (and its genre subdir, if any) */
+        snprintf(old_path, sizeof(old_path), "%s/%s", root, ac_kind_folder(kind));
+        sceIoMkdir(old_path, 0777);
         snprintf(old_path, sizeof(old_path), "%s/%s", root, folder);
         sceIoMkdir(old_path, 0777);
 
@@ -248,7 +302,9 @@ static int organize_iso(const char *root, SceUID rfd)
         disc_id[0] = 0;
         kind = AC_UNKNOWN;
 
-        if (is_cso) {
+        if (has_favorite_sidecar(root, name)) {
+            kind = AC_FAVORITE;
+        } else if (is_cso) {
             cso_ctx_t cso;
             char path[140];
             snprintf(path, sizeof(path), "%s/%s", root, name);
@@ -328,6 +384,118 @@ static int organize_iso(const char *root, SceUID rfd)
     return moved;
 }
 
+/* ── favorites promotion sweep ───────────────────────────── */
+
+/* Move root/name -> root/CAT_00_Favorites/name (collision -> _2, _3...).
+ * Shared by both the eboot-dir and iso-file promotion paths. */
+static int move_into_favorites(const char *root, const char *name, SceUID rfd)
+{
+    char fav_dir[140], old_path[140], new_path[140], report[256];
+    int suffix = 0;
+    char *dot = NULL;
+    char base[128], ext[8];
+
+    snprintf(fav_dir, sizeof(fav_dir), "%s/%s", root, "CAT_00_Favorites");
+    sceIoMkdir(fav_dir, 0777);
+
+    snprintf(base, sizeof(base), "%s", name);
+    dot = strrchr(base, '.');
+    if (dot) {
+        snprintf(ext, sizeof(ext), "%s", dot);
+        *dot = 0;
+    } else {
+        ext[0] = 0;
+    }
+
+    snprintf(old_path, sizeof(old_path), "%s/%s", root, name);
+    for (;;) {
+        if (suffix == 0) {
+            snprintf(new_path, sizeof(new_path), "%s/%s%s",
+                     fav_dir, base, ext);
+        } else {
+            snprintf(new_path, sizeof(new_path), "%s/%s_%d%s",
+                     fav_dir, base, suffix, ext);
+        }
+        if (sceIoGetstat(new_path, NULL) < 0) break;
+        suffix++;
+        if (suffix > 99) return 0;
+    }
+
+    if (sceIoRename(old_path, new_path) >= 0) {
+        snprintf(report, sizeof(report), "FAVORITE %s -> CAT_00_Favorites/\n", name);
+        write_report_line(rfd, report);
+        return 1;
+    }
+    return 0;
+}
+
+/* Sweep already-sorted CAT_xx folders (everything but Favorites/
+ * Uncategorized) for newly favorite-marked games and pull them into
+ * CAT_00_Favorites. This is the one exception to "never touch a
+ * categorized folder" — favoriting is a deliberate user action. */
+static int promote_favorites(const char *root, SceUID rfd)
+{
+    SceUID cat_dfd;
+    SceIoDirent cat_dir;
+    int promoted = 0;
+
+    cat_dfd = sceIoDopen(root);
+    if (cat_dfd < 0) return 0;
+
+    while (sceIoDread(cat_dfd, &cat_dir) > 0) {
+        const char *cat_name = cat_dir.d_name;
+        SceUID dfd;
+        SceIoDirent dir;
+        char cat_path[140];
+
+        if (cat_name[0] == '.') continue;
+        if (!FIO_S_ISDIR(cat_dir.d_stat.st_mode)) continue;
+        if (!is_locked_category(cat_name)) continue; /* not a sorted folder */
+        if (strcmp(cat_name, "CAT_99_Uncategorized") == 0) continue;
+
+        snprintf(cat_path, sizeof(cat_path), "%s/%s", root, cat_name);
+        dfd = sceIoDopen(cat_path);
+        if (dfd < 0) continue;
+
+        while (sceIoDread(dfd, &dir) > 0) {
+            const char *name = dir.d_name;
+            if (name[0] == '.') continue;
+
+            if (FIO_S_ISDIR(dir.d_stat.st_mode)) {
+                if (dir_has_favorite_marker(cat_path, name)) {
+                    promoted += move_into_favorites(cat_path, name, rfd);
+                    continue;
+                }
+                /* not an eboot dir itself? must be a CAT_<Genre> subfolder
+                 * (e.g. CAT_01_PSP/CAT_Action) — look one level deeper */
+                if (strncmp(name, "CAT_", 4) == 0 &&
+                    !dir_has_eboot(cat_path, name)) {
+                    SceUID gdfd;
+                    SceIoDirent gdir;
+                    char genre_path[160];
+                    snprintf(genre_path, sizeof(genre_path), "%s/%s", cat_path, name);
+                    gdfd = sceIoDopen(genre_path);
+                    if (gdfd < 0) continue;
+                    while (sceIoDread(gdfd, &gdir) > 0) {
+                        const char *gname = gdir.d_name;
+                        if (gname[0] == '.') continue;
+                        if (!FIO_S_ISDIR(gdir.d_stat.st_mode)) continue;
+                        if (!dir_has_favorite_marker(genre_path, gname)) continue;
+                        promoted += move_into_favorites(genre_path, gname, rfd);
+                    }
+                    sceIoDclose(gdfd);
+                }
+                continue;
+            }
+            if (!has_favorite_sidecar(cat_path, name)) continue;
+            promoted += move_into_favorites(cat_path, name, rfd);
+        }
+        sceIoDclose(dfd);
+    }
+    sceIoDclose(cat_dfd);
+    return promoted;
+}
+
 /* ── entry ───────────────────────────────────────────────── */
 
 int autocat_run_all(void)
@@ -354,6 +522,9 @@ int autocat_run_all(void)
         snprintf(report, sizeof(report),
                  "\n== AutoCat run on %s ==\n", base);
         write_report_line(rfd, report);
+
+        promote_favorites(game_root, rfd);
+        promote_favorites(iso_root, rfd);
 
         organize_eboots(game_root, rfd);
         organize_iso(iso_root, rfd);

@@ -1,11 +1,15 @@
 # Build artifacts
 build/
 *.o
+*.obj
 *.a
 *.elf
+*.exe
 autocat.prx
+favtool/EBOOT.PBP
 *.zip
 test/test_classify
 test/test_sfo
 test/test_isocd
+test/test_genre
 .PSPSDK

@@ -18,13 +18,27 @@ All recognized PS1 eboots — including POP-FE / PSX2PSP conversions — land in
 
 | Folder | What goes in it |
 |---|---|
-| `CAT_01_PSP` | Official PSP games (CATEGORY=MS/UG/MG, IDs UL*, UC*, NPU*/NPE*/NPH*) |
+| `CAT_00_Favorites` | Games you've marked as a favorite (see below) |
+| `CAT_01_PSP` | Official PSP games (CATEGORY=MS/UG/MG, IDs UL*, UC*, NPU*/NPE*/NPH*/NPJ*) |
 | `CAT_02_PS1` | PSone classics (CATEGORY=PG/ME, IDs SL*, SC*) |
 | `CAT_03_Emulators` | Recognized by title (gPSP, Snes9xTYL, NesterJ, Daedalus, mGBA, CPS1/2PSP...) |
 | `CAT_04_Homebrew` | Everything else |
 | `CAT_99_Uncategorized` | Unreadable EBOOTs/ISOs — left in place, noted in the report |
 
 Numeric prefix = XMB sort order. `CAT_` prefix = compatible with GCLite conventions (and with GCL's filter/sorting if you run both).
+
+## Favorites
+
+AutoCat is a fully standalone sorter — it does **not** need Game Categories Lite installed alongside it. It only *reuses* GCLite's `CAT_xx_Name` folder-naming convention, which the PSP's stock XMB already renders as category folders on its own.
+
+To pin a game to `CAT_00_Favorites` so it always shows up at the top, regardless of what category it'd otherwise sort into:
+
+- **`/PSP/GAME` eboots**: drop an empty file named `FAVORITE` inside the game's folder (e.g. `ms0:/PSP/GAME/God of War - Chains of Olympus/FAVORITE`).
+- **`/ISO` rips**: create an empty sidecar file next to the rip named `<same name>.favorite` (e.g. `Persona 3.iso` -> `Persona 3.iso.favorite`).
+
+On the next boot AutoCat pulls the marked game out of wherever it currently lives — including out of another `CAT_xx` folder — and moves it into `CAT_00_Favorites`. This is the one exception to the "never touch an already-categorized folder" rule, since favoriting is a deliberate action on your part.
+
+There's no built-in "recently played" tracking — that would require patching the game-launch path (VSH syscall hooking), which is explicitly outside this project's "no VSH patching" design and carries real crash risk across different CFWs/firmware versions. Favorites is the safe, standalone way to keep a "continue playing" shortlist.
 
 ## Installation
 
@@ -50,6 +64,10 @@ Numeric prefix = XMB sort order. `CAT_` prefix = compatible with GCLite conventi
 ## Note
 
 If you change the classification rules later and want to re-run on already-sorted games, you'd move the games out of the folders manually — AutoCat deliberately refuses to touch organized categories.
+
+### v1.2: fixed real-hardware no-op bug
+
+On real PSP hardware, `module_start` for a `vsh.txt`-loaded plugin runs synchronously on the VSH's own plugin-loader thread. v1.1 did the entire directory scan/classify/rename pass (plus CSO zlib decompression) right there in `module_start`, before returning. That's a lot of blocking `sceIo*` traffic thrown at a boot-critical thread before the memory stick driver is necessarily done settling — on real hardware this either silently did nothing or got cut short, even though the classification logic itself (covered by the host unit tests) was correct. v1.2 spawns a dedicated worker thread from `module_start`, waits a few seconds for the storage to settle, and does the actual sorting there instead, returning from `module_start` immediately.
 
 ## Building
 
